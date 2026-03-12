@@ -1,10 +1,13 @@
 "use client";
 
-import type { RouteResponse, AlternativeSummary } from "@/types/route";
+import type { RouteResponse, AlternativeSummary, SimState } from "@/types/route";
+import TruckIcon from "./TruckIcon";
 
 interface RouteDetailsProps {
   route: RouteResponse;
   onSelectVariant: (index: number) => void;
+  simState?: SimState;
+  currentStepIndex?: number;
 }
 
 function formatDuration(seconds: number): string {
@@ -20,6 +23,8 @@ function formatDistance(meters: number): string {
 export default function RouteDetails({
   route,
   onSelectVariant,
+  simState,
+  currentStepIndex = 0,
 }: RouteDetailsProps) {
   const traffic = route.traffic_delay_seconds ?? 0;
 
@@ -79,8 +84,8 @@ export default function RouteDetails({
 
         {/* Vehicle info */}
         <div className="flex flex-wrap gap-2 text-xs text-on-surface-variant">
-          <span className="px-2 py-1 rounded-md bg-surface-container-low border border-outline-variant">
-            🚛 {route.vehicle_type}
+          <span className="px-2 py-1 rounded-md bg-surface-container-low border border-outline-variant flex items-center gap-1">
+            <TruckIcon size={16} /> {route.vehicle_type}
           </span>
           {route.vehicle_id && (
             <span className="px-2 py-1 rounded-md bg-surface-container-low border border-outline-variant">
@@ -137,29 +142,46 @@ export default function RouteDetails({
             Directions ({route.route_steps.length} steps)
           </p>
           <div className="max-h-[300px] overflow-y-auto space-y-1 pr-1">
-            {route.route_steps.map((step, i) => (
-              <div
-                key={i}
-                className="flex gap-3 items-start py-2 px-2 rounded-lg
-                           hover:bg-surface-container transition-colors"
-              >
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary-container
-                                text-primary text-xs font-medium flex items-center
-                                justify-center mt-0.5">
-                  {i + 1}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p
-                    className="text-sm text-on-surface"
-                    dangerouslySetInnerHTML={{ __html: step.instruction }}
-                  />
-                  <p className="text-xs text-on-surface-variant mt-0.5">
-                    {formatDistance(step.distance_meters)} ·{" "}
-                    {formatDuration(step.duration_seconds)}
-                  </p>
+            {route.route_steps.map((step, i) => {
+              const isActive = simState === "running" && i === currentStepIndex;
+              const isPast = simState === "running" && i < currentStepIndex;
+              
+              return (
+                <div
+                  key={i}
+                  className={`flex gap-3 items-start py-2 px-2 rounded-lg
+                             transition-all duration-300
+                             ${isActive 
+                               ? "bg-primary-container border-2 border-primary shadow-md" 
+                               : isPast 
+                                 ? "bg-surface-container/50 opacity-60" 
+                                 : "hover:bg-surface-container"
+                             }`}
+                >
+                  <span className={`flex-shrink-0 w-6 h-6 rounded-full 
+                                  text-xs font-medium flex items-center
+                                  justify-center mt-0.5 transition-colors
+                                  ${isActive 
+                                    ? "bg-primary text-on-primary ring-2 ring-primary ring-offset-2" 
+                                    : isPast
+                                      ? "bg-outline-variant text-on-surface-variant"
+                                      : "bg-primary-container text-primary"
+                                  }`}>
+                    {isPast ? "✓" : i + 1}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className={`text-sm ${isActive ? "text-on-primary-container font-medium" : "text-on-surface"}`}
+                      dangerouslySetInnerHTML={{ __html: step.instruction }}
+                    />
+                    <p className={`text-xs mt-0.5 ${isActive ? "text-on-primary-container/80" : "text-on-surface-variant"}`}>
+                      {formatDistance(step.distance_meters)} ·{" "}
+                      {formatDuration(step.duration_seconds)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

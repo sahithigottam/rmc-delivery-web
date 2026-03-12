@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { checkReroute } from "@/lib/api";
 import { decodePolyline, subsampleRoute } from "@/lib/polyline";
+import { showToast } from "@/components/Toast";
 import type { RouteResponse, SimState } from "@/types/route";
 
-const TICK_MS = 120; // animation interval
+const TICK_MS = 1000; // animation interval - 1 second for real-time
 const SUBSAMPLE_N = 300; // number of animation points
-const REROUTE_CHECK_FRACTION = 5; // check traffic every 1/5th of the route
+const REROUTE_CHECK_INTERVAL_MS = 120000; // check traffic every 2 minutes (real-time)
 
 export interface SimulationState {
   simState: SimState;
@@ -15,8 +16,11 @@ export interface SimulationState {
   truckPosition: [number, number] | null;
   animationPoints: [number, number][];
   currentPointIndex: number;
+  currentStepIndex: number;
   remainingKm: number;
   trafficMsg: string | null;
+  speedMultiplier: number;
+  setSpeedMultiplier: (speed: number) => void;
   toggle: () => void;
   stop: () => void;
 }
@@ -27,15 +31,21 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
   const [truckPosition, setTruckPosition] = useState<[number, number] | null>(null);
   const [animationPoints, setAnimationPoints] = useState<[number, number][]>([]);
   const [currentPointIndex, setCurrentPointIndex] = useState(0);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [remainingKm, setRemainingKm] = useState(0);
   const [trafficMsg, setTrafficMsg] = useState<string | null>(null);
+  const [speedMultiplier, setSpeedMultiplier] = useState(60); // Default 60x speed (1 hour = 1 minute)
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const pausedTimeRef = useRef<number>(0);
+  const lastTrafficCheckRef = useRef<number>(0);
   const indexRef = useRef(0);
   const pointsRef = useRef<[number, number][]>([]);
   const reroutingRef = useRef(false);
   const rerouteCountRef = useRef(0);
   const totalKmRef = useRef(0);
+  const totalDurationRef = useRef(0);
   const pausedRef = useRef(false);
   const stateRef = useRef<SimState>("idle");
 
@@ -66,9 +76,9 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
 
         if (result.reroute_recommended && result.polyline) {
           rerouteCountRef.current++;
-          setTrafficMsg(
-            `⚠️ ${result.reason} (reroute #${rerouteCountRef.current})`
-          );
+          const msg = `${result.reason} (reroute #${rerouteCountRef.current})`;
+          setTrafficMsg(`⚠️ ${msg}`);
+          showToast(msg, "warning", 5000);
 
           // Actually replace the remaining path
           const newPts = decodePolyline(result.polyline);
@@ -96,6 +106,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
         }, 3000);
       } catch {
         setTrafficMsg("⚠️ Traffic check failed");
+        showToast("Traffic check failed", "error", 3000);
         setTimeout(() => setTrafficMsg(null), 3000);
       } finally {
         reroutingRef.current = false;
@@ -109,31 +120,65 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
     if (timerRef.current) clearInterval(timerRef.current);
 
     const pts = pointsRef.current;
-    const speed = Math.max(1, Math.ceil(pts.length / 300));
-    const checkEvery = Math.max(15, Math.floor(pts.length / REROUTE_CHECK_FRACTION));
+    startTimeRef.current = Date.now() - pausedTimeRef.current;
+    lastTrafficCheckRef.current = Date.now();
 
     timerRef.current = setInterval(() => {
       if (pausedRef.current) return;
 
       const pts = pointsRef.current;
-      indexRef.current = Math.min(indexRef.current + speed, pts.length - 1);
-      const idx = indexRef.current;
+      const totalDuration = totalDurationRef.current; // in seconds
+      const elapsedReal = (Date.now() - startTimeRef.current) / 1000; // elapsed in real seconds
+      const elapsedSimulated = elapsedReal * speedMultiplier; // apply speed multiplier
+      
+      // Calculate progress based on simulated time
+      const prog = Math.min(elapsedSimulated / totalDuration, 1);
+      const idx = Math.floor(prog * (pts.length - 1));
+      
+      indexRef.current = idx;
       const p = pts[idx];
 
       setTruckPosition(p);
       setCurrentPointIndex(idx);
-
-      const prog = idx / (pts.length - 1 || 1);
       setProgress(prog);
       setRemainingKm(totalKmRef.current * (1 - prog));
 
-      // Periodic traffic check
-      if (idx > 0 && idx % checkEvery === 0 && idx < pts.length - speed) {
+      // Calculate current step based on progress
+      if (route?.route_steps && route.route_steps.length > 0) {
+        const totalDuration = route.duration_seconds;
+        let accumulatedDuration = 0;
+        let stepIdx = 0;
+        
+        for (let i = 0; i < route.route_steps.length; i++) {
+          accumulatedDuration += route.route_steps[i].duration_seconds;
+          const stepProgress = accumulatedDuration / totalDuration;
+          if (prog < stepProgress) {
+            stepIdx = i;
+            break;
+          }
+          stepIdx = i;
+        }
+        setCurrentStepIndex(stepIdx);
+      }
+
+      // Check if behind schedule for rerouting
+      const expectedProgress = elapsedReal / totalDuration; // where we should be at normal speed
+      const actualProgress = prog; // where we actually are
+      const behindSchedule = actualProgress < expectedProgress * 0.85; // 15% behind
+
+      // Periodic traffic check every 2 minutes (adjusted for speed)
+      const checkInterval = REROUTE_CHECK_INTERVAL_MS / speedMultiplier;
+      const timeSinceLastCheck = Date.now() - lastTrafficCheckRef.current;
+      if ((timeSinceLastCheck >= checkInterval || behindSchedule) && prog < 0.95 && prog > 0.05) {
+        lastTrafficCheckRef.current = Date.now();
+        if (behindSchedule) {
+          setTrafficMsg("⚠️ Behind schedule - checking for faster route...");
+        }
         checkTraffic(p);
       }
 
       // Finished
-      if (idx >= pts.length - 1) {
+      if (prog >= 1 || idx >= pts.length - 1) {
         clearInterval(timerRef.current!);
         timerRef.current = null;
         setSimState("finished");
@@ -142,7 +187,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
         setTrafficMsg(null);
       }
     }, TICK_MS);
-  }, [checkTraffic]);
+  }, [checkTraffic, route?.route_steps, route?.duration_seconds, speedMultiplier]);
 
   /* ── Toggle: idle→running, running→paused, paused→running ── */
   const toggle = useCallback(() => {
@@ -156,11 +201,16 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
       indexRef.current = 0;
       rerouteCountRef.current = 0;
       totalKmRef.current = route.distance_meters / 1000;
+      totalDurationRef.current = route.duration_seconds;
       pausedRef.current = false;
+      pausedTimeRef.current = 0;
+      startTimeRef.current = Date.now();
+      lastTrafficCheckRef.current = Date.now();
 
       setAnimationPoints(smooth);
       setTruckPosition(smooth[0]);
       setCurrentPointIndex(0);
+      setCurrentStepIndex(0);
       setProgress(0);
       setRemainingKm(route.distance_meters / 1000);
       setTrafficMsg(null);
@@ -168,9 +218,11 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
       // startLoop will fire via useEffect below
     } else if (simState === "running") {
       pausedRef.current = true;
+      pausedTimeRef.current = Date.now() - startTimeRef.current;
       setSimState("paused");
     } else if (simState === "paused") {
       pausedRef.current = false;
+      startTimeRef.current = Date.now() - pausedTimeRef.current;
       setSimState("running");
     }
   }, [route, simState]);
@@ -189,6 +241,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
     setTruckPosition(null);
     setAnimationPoints([]);
     setCurrentPointIndex(0);
+    setCurrentStepIndex(0);
     setRemainingKm(0);
     setTrafficMsg(null);
   }, []);
@@ -214,8 +267,11 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
     truckPosition,
     animationPoints,
     currentPointIndex,
+    currentStepIndex,
     remainingKm,
     trafficMsg,
+    speedMultiplier,
+    setSpeedMultiplier,
     toggle,
     stop,
   };

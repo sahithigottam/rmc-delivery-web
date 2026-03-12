@@ -183,9 +183,9 @@ export default function MapView({
       // Truck marker
       if (!truckMarkerRef.current && animationPoints.length > 0) {
         const truckIcon = L.divIcon({
-          html: '<div style="font-size:30px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));">🚚</div>',
-          iconSize: [36, 36],
-          iconAnchor: [18, 18],
+          html: '<img src="https://img.freepik.com/free-vector/truck-cement-mixer-cartoon-vector-icon-illustration-transportation-vehicle-icon-isolated-flat_138676-13348.jpg" alt="RMC Truck" style="width:40px;height:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));border-radius:50%;background:white;padding:2px;" />',
+          iconSize: [44, 44],
+          iconAnchor: [22, 22],
           className: "",
         });
         truckMarkerRef.current = L.marker(animationPoints[0], {

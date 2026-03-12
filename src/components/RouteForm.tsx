@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { RouteResponse, SimState } from "@/types/route";
+import AddressAutocomplete from "./AddressAutocomplete";
+import TruckIcon from "./TruckIcon";
 
 interface RouteFormProps {
   onEstimate: (form: RouteFormData) => Promise<void>;
@@ -29,11 +31,9 @@ const AVOID_OPTIONS = [
 ];
 
 const PRIORITY_OPTIONS = [
-  { value: "economy", label: "Economy" },
-  { value: "low", label: "Low" },
-  { value: "normal", label: "Normal" },
-  { value: "urgent", label: "Urgent" },
-  { value: "high", label: "High" },
+  { value: "economy", label: "Economy", hint: "Optimistic ETA" },
+  { value: "normal", label: "Normal", hint: "Best guess ETA" },
+  { value: "urgent", label: "Urgent", hint: "Worst-case ETA" },
 ];
 
 export default function RouteForm({
@@ -54,6 +54,8 @@ export default function RouteForm({
     route_index: 0,
   });
 
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onEstimate(form);
@@ -72,129 +74,56 @@ export default function RouteForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Start */}
+      {/* ── Required: Start & End addresses ── */}
+      <AddressAutocomplete
+        label="Pickup / Plant"
+        value={form.start}
+        onChange={(value) => setForm({ ...form, start: value })}
+        placeholder="e.g. Allied Concrete, Mt Wellington"
+        disabled={disabled}
+      />
+
+      <AddressAutocomplete
+        label="Delivery Site"
+        value={form.end}
+        onChange={(value) => setForm({ ...form, end: value })}
+        placeholder="e.g. 42 Vogel Street, Ponsonby"
+        disabled={disabled}
+      />
+
+      {/* ── Delivery urgency (maps to Google traffic_model) ── */}
       <div>
-        <label className="block text-xs font-medium text-on-surface-variant mb-1">
-          Start Address
+        <label className="block text-xs font-medium text-on-surface-variant mb-1.5">
+          Delivery Urgency
         </label>
-        <input
-          type="text"
-          value={form.start}
-          onChange={(e) => setForm({ ...form, start: e.target.value })}
-          placeholder="e.g. Queen Street, Auckland"
-          required
-          disabled={disabled}
-          className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
-                     bg-surface text-on-surface text-sm
-                     focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20
-                     disabled:opacity-50"
-        />
-      </div>
-
-      {/* End */}
-      <div>
-        <label className="block text-xs font-medium text-on-surface-variant mb-1">
-          Destination
-        </label>
-        <input
-          type="text"
-          value={form.end}
-          onChange={(e) => setForm({ ...form, end: e.target.value })}
-          placeholder="e.g. Hamilton City"
-          required
-          disabled={disabled}
-          className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
-                     bg-surface text-on-surface text-sm
-                     focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20
-                     disabled:opacity-50"
-        />
-      </div>
-
-      {/* Vehicle + Priority row */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium text-on-surface-variant mb-1">
-            Vehicle Type
-          </label>
-          <select
-            value={form.vehicle_type}
-            onChange={(e) =>
-              setForm({ ...form, vehicle_type: e.target.value })
-            }
-            disabled={disabled}
-            className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
-                       bg-surface text-on-surface text-sm
-                       focus:outline-none focus:border-primary"
-          >
-            <option value="rmc_truck">RMC Truck</option>
-            <option value="van">Van</option>
-            <option value="car">Car</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-on-surface-variant mb-1">
-            Priority
-          </label>
-          <select
-            value={form.priority}
-            onChange={(e) =>
-              setForm({ ...form, priority: e.target.value })
-            }
-            disabled={disabled}
-            className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
-                       bg-surface text-on-surface text-sm
-                       focus:outline-none focus:border-primary"
-          >
-            {PRIORITY_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+        <div className="grid grid-cols-3 gap-2">
+          {PRIORITY_OPTIONS.map((o) => {
+            const active = form.priority === o.value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setForm({ ...form, priority: o.value })}
+                disabled={disabled}
+                className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all text-center
+                  ${
+                    active
+                      ? "bg-primary text-on-primary border-primary shadow-sm"
+                      : "bg-surface text-on-surface-variant border-outline-variant hover:bg-surface-container"
+                  }
+                  disabled:opacity-50`}
+              >
+                <div>{o.label}</div>
+                <div className={`text-[10px] mt-0.5 ${active ? "text-on-primary/70" : "text-on-surface-variant/60"}`}>
+                  {o.hint}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Vehicle ID + Weight */}
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-medium text-on-surface-variant mb-1">
-            Vehicle ID
-          </label>
-          <input
-            type="text"
-            value={form.vehicle_id}
-            onChange={(e) =>
-              setForm({ ...form, vehicle_id: e.target.value })
-            }
-            placeholder="RMC-001"
-            disabled={disabled}
-            className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
-                       bg-surface text-on-surface text-sm
-                       focus:outline-none focus:border-primary
-                       disabled:opacity-50"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-on-surface-variant mb-1">
-            Load (kg)
-          </label>
-          <input
-            type="number"
-            value={form.load_weight}
-            onChange={(e) =>
-              setForm({ ...form, load_weight: e.target.value })
-            }
-            placeholder="8000"
-            disabled={disabled}
-            className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
-                       bg-surface text-on-surface text-sm
-                       focus:outline-none focus:border-primary
-                       disabled:opacity-50"
-          />
-        </div>
-      </div>
-
-      {/* Avoid chips */}
+      {/* ── Avoid chips ── */}
       <div>
         <label className="block text-xs font-medium text-on-surface-variant mb-1.5">
           Avoid
@@ -224,7 +153,7 @@ export default function RouteForm({
         </div>
       </div>
 
-      {/* Alternatives toggle */}
+      {/* ── Show alternatives toggle ── */}
       <label className="flex items-center gap-2 cursor-pointer">
         <input
           type="checkbox"
@@ -241,7 +170,72 @@ export default function RouteForm({
         </span>
       </label>
 
-      {/* Submit */}
+      {/* ── Advanced / fleet metadata (collapsed by default) ── */}
+      <button
+        type="button"
+        onClick={() => setShowAdvanced(!showAdvanced)}
+        className="flex items-center gap-1.5 text-xs text-on-surface-variant/70
+                   hover:text-on-surface-variant transition-colors"
+      >
+        <svg
+          className={`w-3 h-3 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+        Fleet details (optional)
+      </button>
+
+      {showAdvanced && (
+        <div className="space-y-3 pl-3 border-l-2 border-outline-variant/30">
+          <p className="text-[10px] text-on-surface-variant/50">
+            These fields are for fleet tracking only — they don't affect route calculation.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-on-surface-variant mb-1">
+                Vehicle ID
+              </label>
+              <input
+                type="text"
+                value={form.vehicle_id}
+                onChange={(e) =>
+                  setForm({ ...form, vehicle_id: e.target.value })
+                }
+                placeholder="RMC-001"
+                disabled={disabled}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
+                           bg-surface text-on-surface text-sm
+                           focus:outline-none focus:border-primary
+                           disabled:opacity-50"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-on-surface-variant mb-1">
+                Load (kg)
+              </label>
+              <input
+                type="number"
+                value={form.load_weight}
+                onChange={(e) =>
+                  setForm({ ...form, load_weight: e.target.value })
+                }
+                placeholder="8000"
+                disabled={disabled}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant
+                           bg-surface text-on-surface text-sm
+                           focus:outline-none focus:border-primary
+                           disabled:opacity-50"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Submit ── */}
       <button
         type="submit"
         disabled={disabled || !form.start || !form.end}
@@ -274,7 +268,9 @@ export default function RouteForm({
             Calculating…
           </span>
         ) : (
-          "🚚 Calculate Route"
+          <span className="flex items-center justify-center gap-2">
+            <TruckIcon size={18} /> Calculate Route
+          </span>
         )}
       </button>
     </form>
