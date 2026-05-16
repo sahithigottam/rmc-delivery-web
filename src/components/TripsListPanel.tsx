@@ -90,6 +90,66 @@ export default function TripsListPanel({
 
   const mixes = Array.from(new Set(trips.map((t) => t.concrete_mix).filter(Boolean))).sort() as string[];
 
+  function exportCSV() {
+    const esc = (v: string | number | null | undefined) => {
+      if (v == null) return "";
+      const s = String(v);
+      return s.includes(",") || s.includes("\"") || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const fmtDate = (iso?: string | null) =>
+      iso ? new Date(iso).toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) : "";
+    const durMin = (secs?: number | null) =>
+      secs != null ? (secs / 60).toFixed(1) : "";
+    const distKm = (m?: number | null) =>
+      m != null ? (m / 1000).toFixed(3) : "";
+
+    const headers = [
+      "Trip ID", "Status", "Outcome",
+      "Mix", "Mix Code", "Grade", "Volume m³",
+      "Plant ID",
+      "From (full)", "To (full)",
+      "Scheduled At (NZT)", "Started At (NZT)", "Completed At (NZT)",
+      "Duration (min)",
+      "Original Distance (km)", "Original Duration (min)",
+      "Traffic Delay (s)",
+      "Reroute Count", "Last Rerouted At (NZT)",
+      "Load Status", "Load Remaining (min)", "Batch Time (NZT)", "Load Expiry (NZT)",
+      "Vehicle ID", "Priority",
+      "Created At (NZT)",
+    ];
+
+    const rows = visible.map((t) => {
+      const actualDuration =
+        t.started_at && t.completed_at
+          ? ((new Date(t.completed_at).getTime() - new Date(t.started_at).getTime()) / 60000).toFixed(1)
+          : "";
+      return [
+        esc(t.id), esc(t.status), esc(t.outcome),
+        esc(t.concrete_mix), esc(t.mix_code), esc(t.concrete_grade), esc(t.volume_m3),
+        esc(t.plant_id),
+        esc(t.start_address), esc(t.end_address),
+        esc(fmtDate(t.scheduled_at)), esc(fmtDate(t.started_at)), esc(fmtDate(t.completed_at)),
+        esc(actualDuration),
+        esc(distKm(t.original_distance_meters)), esc(durMin(t.original_duration_seconds)),
+        esc(t.current_traffic_delay),
+        esc(t.reroute_count), esc(fmtDate(t.last_reroute_at)),
+        esc(t.load_status), esc(t.load_minutes_remaining != null ? t.load_minutes_remaining.toFixed(1) : undefined),
+        esc(fmtDate(t.batch_time)), esc(fmtDate(t.load_expiry_time)),
+        esc(t.vehicle_id), esc(t.priority),
+        esc(fmtDate(t.created_at)),
+      ].join(",");
+    });
+
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `trips-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const visible = trips.filter((t) => {
     if (statusFilter === "active" && !ACTIVE_STATUSES.includes(t.status)) return false;
     if (statusFilter === "pending" && t.status !== "pending") return false;
@@ -111,13 +171,24 @@ export default function TripsListPanel({
             {trips.length} total · {trips.filter((t) => ACTIVE_STATUSES.includes(t.status)).length} active
           </p>
         </div>
-        <button onClick={refresh} disabled={loading}
-          className="flex items-center gap-1.5 text-xs text-primary font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
-          <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" />
-          </svg>
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => exportCSV()} disabled={visible.length === 0}
+            className="flex items-center gap-1.5 text-xs text-on-surface-variant font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Export CSV
+          </button>
+          <button onClick={refresh} disabled={loading}
+            className="flex items-center gap-1.5 text-xs text-primary font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
+            <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" />
+            </svg>
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
