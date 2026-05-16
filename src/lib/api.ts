@@ -122,6 +122,10 @@ export async function getAllTrips(limit = 100): Promise<TripResponse[]> {
   return apiFetch<TripResponse[]>(`/trips/all?limit=${limit}`);
 }
 
+export async function deleteTrip(tripId: number): Promise<void> {
+  await apiFetch<void>(`/trips/${tripId}`, { method: "DELETE" });
+}
+
 export async function getTrip(tripId: number): Promise<TripResponse> {
   return apiFetch<TripResponse>(`/trips/${tripId}`);
 }
@@ -184,6 +188,8 @@ export function getTripStreamURL(tripId: number): string {
 
 import type {
   PlantOut,
+  PlantCreate,
+  PlantUpdate,
   BrandAnalysisRequest,
   BrandAnalysisResponse,
   DispatchRequest,
@@ -196,12 +202,29 @@ export async function getBrands(): Promise<string[]> {
   return apiFetch<string[]>("/plants/brands");
 }
 
-export async function getPlants(brand?: string, region?: string): Promise<PlantOut[]> {
+export async function getPlants(brand?: string, region?: string, activeOnly = false): Promise<PlantOut[]> {
   const params = new URLSearchParams();
   if (brand) params.set("brand", brand);
   if (region) params.set("region", region);
+  if (!activeOnly) params.set("active_only", "false");
   const qs = params.toString() ? `?${params}` : "";
   return apiFetch<PlantOut[]>(`/plants${qs}`);
+}
+
+export async function createPlant(body: PlantCreate): Promise<PlantOut> {
+  return apiFetch<PlantOut>("/plants", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function updatePlant(plantId: string, body: PlantCreate): Promise<PlantOut> {
+  return apiFetch<PlantOut>(`/plants/${plantId}`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+export async function togglePlant(plantId: string, active: boolean): Promise<PlantOut> {
+  return apiFetch<PlantOut>(`/plants/${plantId}`, { method: "PATCH", body: JSON.stringify({ active }) });
+}
+
+export async function deletePlant(plantId: string): Promise<void> {
+  await apiFetch<void>(`/plants/${plantId}`, { method: "DELETE" });
 }
 
 export async function analyseBrand(req: BrandAnalysisRequest): Promise<BrandAnalysisResponse> {

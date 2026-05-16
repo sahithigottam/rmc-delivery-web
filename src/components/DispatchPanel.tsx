@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getBrands, analyseBrand, dispatchTrip } from "@/lib/api";
+import { getBrands, getPlants, analyseBrand, dispatchTrip } from "@/lib/api";
 import type {
+  PlantOut,
   PlantPredictionResult,
   BrandAnalysisResponse,
   DispatchResponse,
@@ -12,7 +13,7 @@ import AddressAutocomplete from "./AddressAutocomplete";
 import type { Suggestion } from "./AddressAutocomplete";
 
 /*  Types  */
-type Step = 1 | 2 | 3;
+type Step = 1 | 3;   // Step 2 (analysis results) is now inline in Step 1
 const MIXES = ["GP", "HE", "RE"] as const;
 type Mix = (typeof MIXES)[number];
 
@@ -67,28 +68,30 @@ function Spinner() {
 }
 
 function StepBar({ current }: { current: Step }) {
-  const labels = ["Plan", "Select Plant", "Schedule"];
+  const labels = ["Plan & Select Plant", "Schedule"];
+  const steps = [1, 3] as Step[];
+  const idx = steps.indexOf(current);
   return (
     <div className="flex items-center gap-1 mb-4">
-      {([1, 2, 3] as Step[]).map((s) => (
+      {steps.map((s, i) => (
         <div key={s} className="flex items-center">
           <div
             className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center transition-all ${
               current === s
                 ? "bg-primary text-on-primary shadow-sm"
-                : current > s
+                : idx > i
                 ? "bg-primary/20 text-primary"
                 : "bg-surface-container text-on-surface-variant"
             }`}
           >
-            {current > s ? "✓" : s}
+            {idx > i ? "✓" : i + 1}
           </div>
-          {s < 3 && (
-            <div className={`h-0.5 w-7 mx-0.5 transition-all ${current > s ? "bg-primary/40" : "bg-outline-variant"}`} />
+          {i < steps.length - 1 && (
+            <div className={`h-0.5 w-7 mx-0.5 transition-all ${idx > i ? "bg-primary/40" : "bg-outline-variant"}`} />
           )}
         </div>
       ))}
-      <span className="ml-2 text-xs text-on-surface-variant font-medium">{labels[current - 1]}</span>
+      <span className="ml-2 text-xs text-on-surface-variant font-medium">{labels[idx]}</span>
     </div>
   );
 }
@@ -109,10 +112,15 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   const [mix, setMix] = useState<Mix>("GP");
   const [jobSite, setJobSite] = useState("");
   const [jobSiteData, setJobSiteData] = useState<Suggestion | null>(null);
-
-  // Step 2 state
+  const [brandPlants, setBrandPlants] = useState<PlantOut[]>([]);
+  const [loadingPlants, setLoadingPlants] = useState(false);
+  // Analysis — runs automatically when brand + jobSite are set
   const [analysis, setAnalysis] = useState<BrandAnalysisResponse | null>(null);
-  const [selected, setSelected] = useState<PlantPredictionResult | null>(null);
+  const [analysing, setAnalysing] = useState(false);
+  // analysisKey tracks what the current analysis is for; if stale we re-run
+  const [analysisKey, setAnalysisKey] = useState("");
+  // User-chosen plant (optional — falls back to best from analysis)
+  const [selectedPlantId, setSelectedPlantId] = useState<string | null>(null);
 
   // Step 3 state
   const [scheduledAt, setScheduledAt] = useState("");
@@ -131,8 +139,20 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
       .finally(() => setLoadingBrands(false));
   }, []);
 
-  // Set a sensible default departure time when entering step 3.
-  // Always expressed in NZST (UTC+12) so the value matches what NZ dispatchers expect.
+  // Load plants for selected brand (instant, no Google API)
+  useEffect(() => {
+    if (!brand) { setBrandPlants([]); setAnalysis(null); return; }
+    setLoadingPlants(true);
+    setSelectedPlantId(null);
+    getPlants(brand)
+      .then(setBrandPlants)
+      .catch(() => setBrandPlants([]))
+      .finally(() => setLoadingPlants(false));
+    setAnalysis(null);
+    setAnalysisKey("");
+  }, [brand]);
+
+  // Set a sensible default departure time when entering step 3
   useEffect(() => {
     if (step === 3 && !scheduledAt) {
       const NZT_OFFSET_MS = 12 * 60 * 60 * 1000;
@@ -144,33 +164,51 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
     }
   }, [step, scheduledAt]);
 
-  /*  Handlers  */
+  // Derive the effective selected plant (user pick OR algorithm best)
+  const effectivePlant: PlantPredictionResult | null = (() => {
+    if (analysis) {
+      const pick = analysis.results.find(
+        (r) => r.plant.id === (selectedPlantId ?? analysis.best_plant_id)
+      );
+      return pick ?? analysis.results[0] ?? null;
+    }
+    if (selectedPlantId) {
+      const p = brandPlants.find((p) => p.id === selectedPlantId);
+      if (p) return {
+        plant: p,
+        google_eta_minutes: undefined, adjusted_eta_minutes: undefined,
+        remaining_life_minutes: undefined, risk_level: undefined,
+        success_probability: undefined,
+      };
+    }
+    return null;
+  })();
+
+  // Manual re-analyse trigger
   const handleAnalyse = async () => {
-    if (!brand) { showToast("Please select a brand", "error"); return; }
-    if (!jobSite.trim() || !jobSiteData) { showToast("Please enter and select a job site address", "error"); return; }
-    setLoading(true);
+    if (!brand || !jobSiteData) { showToast("Select brand and job site first", "error"); return; }
+    const key = `${brand}|${(jobSiteData as any).display_name ?? jobSite}|${mix}`;
+    setAnalysisKey(key);
+    setAnalysis(null);
+    setAnalysing(true);
     try {
-      const res = await analyseBrand({ brand, job_site_data: jobSiteData as unknown as Record<string, unknown>, concrete_mix: mix, top_n: 5 });
+      const res = await analyseBrand({ brand, job_site_data: jobSiteData as unknown as Record<string, unknown>, concrete_mix: mix, top_n: 10, include_llm_analysis: false });
       setAnalysis(res);
-      setStep(2);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Analysis failed", "error");
     } finally {
-      setLoading(false);
+      setAnalysing(false);
     }
   };
 
-  const handleSelectPlant = (r: PlantPredictionResult) => {
-    setSelected(r);
-    setStep(3);
-  };
-
   const handleDispatch = async () => {
-    if (!selected || !scheduledAt) { showToast("Please set a departure date/time", "error"); return; }
+    if (!effectivePlant) { showToast("Select a brand and plant", "error"); return; }
+    if (!jobSiteData) { showToast("Enter a job site address", "error"); return; }
+    if (!scheduledAt) { showToast("Set a departure time", "error"); return; }
     setLoading(true);
     try {
       const resp = await dispatchTrip({
-        plant_id: selected.plant.id,
+        plant_id: effectivePlant.plant.id,
         job_site_address: jobSite,
         concrete_mix: mix,
         scheduled_at: new Date(scheduledAt + ":00+12:00").toISOString(),
@@ -178,16 +216,16 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
         volume_m3: volumeM3 ? Number(volumeM3) : undefined,
         pour_duration_minutes: pourMin ? Number(pourMin) : undefined,
         prediction_snapshot: {
-          google_eta_minutes: selected.google_eta_minutes,
-          adjusted_eta_minutes: selected.adjusted_eta_minutes,
-          remaining_life_minutes: selected.remaining_life_minutes,
-          risk_level: selected.risk_level,
-          success_probability: selected.success_probability,
+          google_eta_minutes: effectivePlant.google_eta_minutes,
+          adjusted_eta_minutes: effectivePlant.adjusted_eta_minutes,
+          remaining_life_minutes: effectivePlant.remaining_life_minutes,
+          risk_level: effectivePlant.risk_level,
+          success_probability: effectivePlant.success_probability,
         },
       });
       setDispatched(resp);
       onDispatched(resp);
-      showToast(` Trip #${resp.trip_id} scheduled`, "success");
+      showToast(`✅ Trip #${resp.trip_id} scheduled`, "success");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Dispatch failed", "error");
     } finally {
@@ -198,14 +236,18 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   const resetFlow = () => {
     setStep(1);
     setAnalysis(null);
-    setSelected(null);
+    setAnalysisKey("");
+    setSelectedPlantId(null);
     setDispatched(null);
     setScheduledAt("");
     setVehicleId("");
+    setBrandPlants([]);
     setJobSiteData(null);
     setVolumeM3("6");
     setPourMin("");
   };
+
+  const concreteWindow = CONCRETE_WINDOWS[mix];
 
   /*  Success state  */
   if (dispatched) {
@@ -216,38 +258,29 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
     return (
       <div className="p-4 rounded-xl bg-surface-container space-y-4">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl"></div>
+          <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl">✅</div>
           <div>
             <p className="font-semibold text-on-surface">Trip Scheduled</p>
             <p className="text-xs text-on-surface-variant">Pending driver departure</p>
           </div>
         </div>
-
         <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-1 text-sm">
           <p className="font-medium text-on-surface">Trip #{dispatched.trip_id}</p>
           <p className="text-on-surface-variant">{dispatched.plant_name}</p>
           <p className="text-xs text-on-surface-variant">{dispatched.plant_address}</p>
-          <p className="text-on-surface-variant pt-1"> {dispatched.job_site_address}</p>
+          <p className="text-on-surface-variant pt-1">📍 {dispatched.job_site_address}</p>
           <div className="flex flex-wrap gap-3 pt-1 text-xs text-on-surface-variant">
-            {dispatched.distance_meters && (
-              <span> {(dispatched.distance_meters / 1000).toFixed(1)} km</span>
-            )}
-            {dispatched.estimated_duration_minutes && (
-              <span> ~{Math.round(dispatched.estimated_duration_minutes)} min</span>
-            )}
-            <span> {dispatched.concrete_mix}</span>
+            {dispatched.distance_meters && <span>📏 {(dispatched.distance_meters / 1000).toFixed(1)} km</span>}
+            {dispatched.estimated_duration_minutes && <span>⏱ ~{Math.round(dispatched.estimated_duration_minutes)} min</span>}
+            <span>🧱 {dispatched.concrete_mix}</span>
           </div>
-          <p className="pt-1 text-xs font-medium text-on-surface"> {depDate}</p>
+          <p className="pt-1 text-xs font-medium text-on-surface">🕐 {depDate}</p>
         </div>
-
         <p className="text-xs text-on-surface-variant text-center">
-          Route loaded on map. Go to the <strong>Live Trip</strong> tab to begin the trip when the truck is loaded.
+          Route loaded on map. Go to <strong>Live Trip</strong> tab to begin when truck is loaded.
         </p>
-
-        <button
-          onClick={resetFlow}
-          className="w-full py-2.5 rounded-xl border border-outline-variant text-sm font-medium hover:bg-surface-container-low transition-colors"
-        >
+        <button onClick={resetFlow}
+          className="w-full py-2.5 rounded-xl border border-outline-variant text-sm font-medium hover:bg-surface-container-low transition-colors">
           + Schedule Another Delivery
         </button>
       </div>
@@ -255,13 +288,11 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   }
 
   /*  Render  */
-  const concreteWindow = CONCRETE_WINDOWS[mix];
-
   return (
     <div className="space-y-1">
       <StepBar current={step} />
 
-      {/*  Step 1: Plan  */}
+      {/*  Step 1: Plan + Plant picker  */}
       {step === 1 && (
         <div className="space-y-3">
           <h3 className="font-semibold text-on-surface">Plan Delivery</h3>
@@ -269,33 +300,48 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
           {/* Brand */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">CONCRETE BRAND</label>
-            <select
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
+            <select value={brand} onChange={(e) => { setBrand(e.target.value); setSelectedPlantId(null); setAnalysis(null); setAnalysisKey(""); }}
               disabled={loadingBrands}
-              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
-            >
-              <option value="">{loadingBrands ? "Loading" : "Select brand"}</option>
-              {brands.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
+              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60">
+              <option value="">{loadingBrands ? "Loading…" : "Select brand"}</option>
+              {brands.map((b) => <option key={b} value={b}>{b}</option>)}
             </select>
           </div>
+
+          {/* Plant — shown once brand is selected */}
+          {brand && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">PLANT</label>
+                {analysis && !selectedPlantId && (
+                  <span className="text-[10px] text-emerald-600 font-medium">★ algorithm pick</span>
+                )}
+              </div>
+              <select
+                value={selectedPlantId ?? ""}
+                onChange={(e) => setSelectedPlantId(e.target.value || null)}
+                disabled={loadingPlants}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
+              >
+                <option value="">
+                  {loadingPlants ? "Loading plants…" : "N/A"}
+                </option>
+                {brandPlants.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Mix type */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">CONCRETE MIX</label>
             <div className="grid grid-cols-3 gap-2">
               {MIXES.map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMix(m)}
+                <button key={m} onClick={() => { setMix(m); setAnalysis(null); setAnalysisKey(""); }}
                   className={`py-2 rounded-xl text-sm font-bold border transition-all ${
-                    mix === m
-                      ? "bg-primary text-on-primary border-primary shadow-sm"
-                      : "border-outline-variant text-on-surface-variant hover:bg-surface-container"
-                  }`}
-                >
+                    mix === m ? "bg-primary text-on-primary border-primary shadow-sm" : "border-outline-variant text-on-surface-variant hover:bg-surface-container"
+                  }`}>
                   {m}
                 </button>
               ))}
@@ -307,147 +353,100 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
           <AddressAutocomplete
             label="JOB SITE ADDRESS"
             value={jobSite}
-            onChange={(v) => { setJobSite(v); setJobSiteData(null); }}
+            onChange={(v) => { setJobSite(v); setJobSiteData(null); setAnalysis(null); setAnalysisKey(""); }}
             onSelect={(s) => setJobSiteData(s)}
             placeholder="e.g. 45 Queen Street, Auckland CBD"
             disabled={loading}
           />
 
+          {/* Analyse button */}
+          {jobSiteData && brand && (
+            <button onClick={handleAnalyse} disabled={analysing}
+              className="w-full py-2.5 rounded-xl border border-primary text-primary font-semibold text-sm flex items-center justify-center gap-2 hover:bg-primary/5 transition-colors disabled:opacity-40">
+              {analysing ? (
+                <><Spinner /> Analysing…</>
+              ) : analysis ? "↺ Re-analyse Plants" : "⚡ Analyse Plants"}
+            </button>
+          )}
+
+          {/* Analysis results card */}
+          {analysis && (() => {
+            const best = analysis.results.find((r) => r.plant.id === analysis.best_plant_id);
+            const shown = selectedPlantId
+              ? analysis.results.find((r) => r.plant.id === selectedPlantId)
+              : best;
+            if (!shown) return null;
+            return (
+              <div className="p-3 rounded-xl bg-surface-container border border-outline-variant space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-on-surface">
+                    {selectedPlantId ? shown.plant.name : `★ Best: ${shown.plant.name}`}
+                  </p>
+                  <RiskBadge level={shown.risk_level} />
+                </div>
+                <div className="flex flex-wrap gap-3 text-xs text-on-surface-variant">
+                  {shown.google_eta_minutes != null && (
+                    <span>⏱ ~{Math.round(shown.google_eta_minutes)} min drive</span>
+                  )}
+                  {shown.remaining_life_minutes != null && (
+                    <span>🧱 {Math.round(shown.remaining_life_minutes)} min buffer</span>
+                  )}
+                  {shown.success_probability != null && (
+                    <span>✅ {Math.round(shown.success_probability * 100)}% on-time</span>
+                  )}
+                </div>
+                {shown.remaining_life_minutes != null && (
+                  <LifeBar remaining={shown.remaining_life_minutes} total={concreteWindow} />
+                )}
+              </div>
+            );
+          })()}
+
+          {/* CTA */}
           <button
-            onClick={handleAnalyse}
-            disabled={loading || !brand || !jobSiteData}
-            className="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold text-sm shadow-sm hover:shadow-md transition-all disabled:opacity-40 active:scale-[0.98] flex items-center justify-center gap-2"
+            onClick={() => setStep(3)}
+            disabled={!jobSiteData || !brand || (!effectivePlant)}
+            className="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold text-sm shadow-sm hover:shadow-md transition-all disabled:opacity-40 active:scale-[0.98]"
           >
-            {loading ? <><Spinner /> Analysing plants</> : " Analyse Plants"}
+            {effectivePlant
+              ? `Schedule with ${effectivePlant.plant.name} →`
+              : "Select brand & job site to continue"}
           </button>
         </div>
       )}
 
-      {/*  Step 2: Select plant  */}
-      {step === 2 && analysis && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setStep(1)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors"
-            >
-              ←
-            </button>
-            <div>
-              <h3 className="font-semibold text-on-surface">{analysis.brand} Plants</h3>
-              <p className="text-xs text-on-surface-variant">{analysis.total_plants_analysed} analysed  ranked by concrete life</p>
-            </div>
-          </div>
-
-          <div className="space-y-2 max-h-[440px] overflow-y-auto pr-0.5 sidebar-scroll">
-            {analysis.results.map((r) => {
-              const isBest = r.plant.id === analysis.best_plant_id;
-              return (
-                <div
-                  key={r.plant.id}
-                  className={`p-3 rounded-xl border transition-colors ${
-                    isBest
-                      ? "border-emerald-300 bg-emerald-50/60"
-                      : "border-outline-variant bg-surface-container"
-                  }`}
-                >
-                  {/* Plant header */}
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-sm font-semibold text-on-surface">{r.plant.name}</span>
-                        {isBest && (
-                          <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[9px] font-bold">BEST</span>
-                        )}
-                        <RiskBadge level={r.risk_level} />
-                      </div>
-                      <p className="text-xs text-on-surface-variant mt-0.5 truncate">{r.plant.address}</p>
-                    </div>
-                  </div>
-
-                  {r.error ? (
-                    <p className="text-xs text-md-red"> {r.error}</p>
-                  ) : (
-                    <>
-                      {/* Metrics */}
-                      <div className="grid grid-cols-3 gap-2 text-xs mb-2">
-                        <div>
-                          <p className="text-on-surface-variant">Google ETA</p>
-                          <p className="font-semibold text-on-surface">
-                            {r.google_eta_minutes != null ? `${Math.round(r.google_eta_minutes)} min` : "â€“"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant">Adj. ETA</p>
-                          <p className="font-semibold text-on-surface">
-                            {r.adjusted_eta_minutes != null ? `${Math.round(r.adjusted_eta_minutes)} min` : "â€“"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant">Success</p>
-                          <p className="font-semibold text-on-surface">
-                            {r.success_probability != null ? `${Math.round(r.success_probability * 100)}%` : "â€“"}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Life bar */}
-                      {r.remaining_life_minutes != null && (
-                        <LifeBar remaining={r.remaining_life_minutes} total={concreteWindow} />
-                      )}
-
-                      {/* Recommendation */}
-                      {r.recommendation && (
-                        <p className="text-xs text-on-surface-variant italic border-t border-outline-variant/50 mt-2 pt-2">
-                          {r.recommendation}
-                        </p>
-                      )}
-                    </>
-                  )}
-
-                  <button
-                    onClick={() => handleSelectPlant(r)}
-                    disabled={!!r.error}
-                    className="mt-2.5 w-full py-1.5 rounded-lg bg-primary text-on-primary text-xs font-semibold hover:shadow-sm transition-all disabled:opacity-40 active:scale-[0.98]"
-                  >
-                    Select This Plant 
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/*  Step 3: Schedule  */}
-      {step === 3 && selected && (
+      {step === 3 && effectivePlant && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setStep(2)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors"
-            >
+            <button onClick={() => setStep(1)}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors">
               ←
             </button>
             <h3 className="font-semibold text-on-surface">Schedule Delivery</h3>
           </div>
 
           {/* Selected plant summary */}
-          <div className="p-3 rounded-xl bg-primary/5 border border-primary/20">
+          <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-1">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-on-surface">{selected.plant.name}</p>
-              <RiskBadge level={selected.risk_level} />
+              <p className="text-sm font-semibold text-on-surface">{effectivePlant.plant.name}</p>
+              <RiskBadge level={effectivePlant.risk_level} />
             </div>
-            <p className="text-xs text-on-surface-variant mt-0.5">{selected.plant.address}</p>
-            <p className="text-xs text-on-surface-variant mt-1"> {jobSite}</p>
-            <div className="flex gap-3 mt-1.5 text-xs text-on-surface-variant">
-              {selected.adjusted_eta_minutes != null && (
-                <span> ~{Math.round(selected.adjusted_eta_minutes)} min drive</span>
+            <p className="text-xs text-on-surface-variant">{effectivePlant.plant.address}</p>
+            <p className="text-xs text-on-surface-variant mt-0.5">📍 {jobSite}</p>
+            <div className="flex gap-3 mt-1 text-xs text-on-surface-variant">
+              {effectivePlant.adjusted_eta_minutes != null && (
+                <span>⏱ ~{Math.round(effectivePlant.adjusted_eta_minutes)} min drive</span>
               )}
-              {selected.remaining_life_minutes != null && (
-                <span> {Math.round(selected.remaining_life_minutes)} min buffer</span>
+              {effectivePlant.remaining_life_minutes != null && (
+                <span>🧱 {Math.round(effectivePlant.remaining_life_minutes)} min buffer</span>
               )}
             </div>
+            {effectivePlant.remaining_life_minutes != null && effectivePlant.remaining_life_minutes <= 0 && (
+              <p className="text-xs font-semibold text-red-600 mt-1">
+                ⚠ Warning: concrete may expire before arrival — consider a closer plant
+              </p>
+            )}
           </div>
 
           {/* Departure time */}
@@ -455,56 +454,35 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
               DEPARTURE DATE & TIME (NZST) <span className="text-md-red">*</span>
             </label>
-            <input
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors"
-            />
+            <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">VOLUME (m)</label>
-              <input
-                type="number"
-                value={volumeM3}
-                onChange={(e) => setVolumeM3(e.target.value)}
-                placeholder="6.0"
-                min="0.5" max="20" step="0.5"
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors"
-              />
+              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">VOLUME (m³)</label>
+              <input type="number" value={volumeM3} onChange={(e) => setVolumeM3(e.target.value)}
+                placeholder="6.0" min="0.5" max="20" step="0.5"
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">POUR DURATION (min)</label>
-              <input
-                type="number"
-                value={pourMin}
-                onChange={(e) => setPourMin(e.target.value)}
-                placeholder="optional"
-                min="1" max="240"
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors"
-              />
+              <input type="number" value={pourMin} onChange={(e) => setPourMin(e.target.value)}
+                placeholder="optional" min="1" max="240"
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
             </div>
           </div>
 
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">VEHICLE ID (optional)</label>
-            <input
-              type="text"
-              value={vehicleId}
-              onChange={(e) => setVehicleId(e.target.value)}
+            <input type="text" value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}
               placeholder="e.g. TRK-001"
-              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors"
-            />
+              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
           </div>
 
-          <button
-            onClick={handleDispatch}
-            disabled={loading || !scheduledAt}
-            className="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold text-sm shadow-sm hover:shadow-md transition-all disabled:opacity-40 active:scale-[0.98] flex items-center justify-center gap-2"
-          >
-            {loading ? <><Spinner /> Scheduling</> : " Confirm Dispatch"}
+          <button onClick={handleDispatch} disabled={loading || !scheduledAt}
+            className="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold text-sm shadow-sm hover:shadow-md transition-all disabled:opacity-40 active:scale-[0.98] flex items-center justify-center gap-2">
+            {loading ? <><Spinner /> Scheduling…</> : "✅ Confirm Dispatch"}
           </button>
         </div>
       )}

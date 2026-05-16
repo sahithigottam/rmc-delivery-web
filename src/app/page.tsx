@@ -2,18 +2,16 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useState } from "react";
-import { estimateRoute, getTrip, getRoute } from "@/lib/api";
+import { getTrip, getRoute } from "@/lib/api";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useTripStream } from "@/hooks/useTripStream";
-import RouteForm from "@/components/RouteForm";
-import type { RouteFormData } from "@/components/RouteForm";
-import RouteDetails from "@/components/RouteDetails";
 import SimulationControls from "@/components/SimulationControls";
 import TripManagement from "@/components/TripManagement";
 import TripEventLog from "@/components/TripEventLog";
 import MapOverlay from "@/components/MapOverlay";
 import DispatchPanel from "@/components/DispatchPanel";
 import TripsListPanel from "@/components/TripsListPanel";
+import PlantsPanel from "@/components/PlantsPanel";
 import ToastContainer, { showToast } from "@/components/Toast";
 import TruckIcon from "@/components/TruckIcon";
 import type { RouteResponse, TripResponse, DispatchResponse, SimState } from "@/types/route";
@@ -21,14 +19,12 @@ import type { RouteResponse, TripResponse, DispatchResponse, SimState } from "@/
 /* Leaflet must not SSR */
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
-type ActiveTab = "dispatch" | "route" | "trip" | "trips";
+type ActiveTab = "dispatch" | "trip" | "trips" | "plants";
 
 export default function Home() {
   const [route, setRoute] = useState<RouteResponse | null>(null);
   const [trip, setTrip] = useState<TripResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [viewedTrip, setViewedTrip] = useState<TripResponse | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("dispatch");
 
   // Pass active trip ID so simulation posts real GPS positions to the backend,
@@ -63,6 +59,7 @@ export default function Home() {
         getRoute(resp.route_id),
       ]);
       setTrip(fullTrip);
+      setViewedTrip(null);
       setRoute(fullRoute);
       setActiveTab("trip");
       showToast(`Trip #${resp.trip_id} dispatched to ${resp.plant_name}`, "success");
@@ -72,91 +69,20 @@ export default function Home() {
     }
   }, []);
 
-  /* -- Estimate route -- */
-  const handleEstimate = useCallback(
-    async (form: RouteFormData) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await estimateRoute({
-          start: { address: form.start },
-          end: { address: form.end },
-          vehicle_type: form.vehicle_type,
-          vehicle_id: form.vehicle_id || undefined,
-          load_weight: form.load_weight ? Number(form.load_weight) : undefined,
-          priority: form.priority,
-          avoid: form.avoid.length > 0 ? form.avoid : undefined,
-          request_alternatives: form.request_alternatives,
-          route_index: form.route_index,
-        });
-        setRoute(result);
-        setActiveTab("route");
-        showToast(`Route: ${(result.distance_meters / 1000).toFixed(1)} km`, "success");
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to calculate route";
-        setError(msg);
-        showToast(msg, "error");
-      } finally {
-        setLoading(false);
-      }
-    },
-    []
-  );
 
-  /* -- Select route variant -- */
-  const handleSelectVariant = useCallback(
-    async (index: number) => {
-      if (!route) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await estimateRoute({
-          start: route.start,
-          end: route.end,
-          vehicle_type: route.vehicle_type,
-          vehicle_id: route.vehicle_id ?? undefined,
-          load_weight: route.load_weight ?? undefined,
-          priority: route.priority,
-          avoid: route.avoid ?? undefined,
-          request_alternatives: true,
-          route_index: index,
-        });
-        setRoute(result);
-        showToast(
-          `Switched to ${result.alternatives_summary?.[index]?.summary ?? "Route " + (index + 1)}`,
-          "info"
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to load variant";
-        setError(msg);
-        showToast(msg, "error");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [route]
-  );
 
   const liveTrip = trip?.status === "in_progress" || trip?.status === "paused";
+  const showMap = activeTab === "dispatch" || activeTab === "trip";
 
   return (
     <div className="flex flex-col h-screen">
       <ToastContainer />
 
       {/* Top bar */}
-      <header className="flex items-center h-14 px-4 bg-primary text-on-primary shadow-md z-30 flex-shrink-0">
-        <button
-          onClick={() => setSidebarOpen((v) => !v)}
-          className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-white/10 transition-colors mr-2"
-          aria-label="Toggle sidebar"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 12h18M3 6h18M3 18h18" />
-          </svg>
-        </button>
-        <span className="text-lg font-medium tracking-wide">RMC Delivery Route Optimizer</span>
+      <header className="flex items-center h-14 px-5 bg-primary text-on-primary shadow-md z-30 flex-shrink-0">
+        <span className="text-lg font-medium tracking-wide flex-1">RMC Delivery</span>
         {connected && liveTrip && (
-          <div className="ml-auto flex items-center gap-2 text-sm opacity-90">
+          <div className="flex items-center gap-2 text-sm opacity-90">
             <div className="w-2 h-2 rounded-full bg-md-green animate-pulse" />
             Live Tracking
           </div>
@@ -164,95 +90,34 @@ export default function Home() {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar */}
-        <aside
-          className={`
-            ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
-            w-[400px] max-w-[85vw] flex-shrink-0 bg-surface border-r border-outline-variant
-            flex flex-col overflow-hidden z-20
-            transition-transform duration-300 ease-in-out
-            absolute md:relative h-full
-          `}
-        >
-          {/* Tab bar */}
-          <div className="flex border-b border-outline-variant bg-surface flex-shrink-0">
-            <TabBtn id="dispatch" active={activeTab} label="Dispatch" icon="" onClick={setActiveTab} />
-            <TabBtn id="route" active={activeTab} label="Route" icon="" onClick={setActiveTab} />
-            <TabBtn
-              id="trip"
-              active={activeTab}
-              label="Live Trip"
-              icon=""
-              onClick={setActiveTab}
-              badge={trip != null}
-              badgePulse={liveTrip}
-            />
-            <TabBtn id="trips" active={activeTab} label="Trips" icon="" onClick={setActiveTab} />
-          </div>
+      <div className="flex flex-1 overflow-hidden">
 
-          {/* Scrollable content */}
-          <div className="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-4">
+        {/* Left nav */}
+        <nav className="w-52 flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col py-2 z-20">
+          <NavItem id="dispatch" active={activeTab} label="Dispatch" onClick={setActiveTab}
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>}
+          />
+          <NavItem id="trip" active={activeTab} label="Live Trip" onClick={setActiveTab}
+            badge={trip != null} badgePulse={liveTrip}
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>}
+          />
+          <NavItem id="trips" active={activeTab} label="Trips" onClick={setActiveTab}
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>}
+          />
+          <NavItem id="plants" active={activeTab} label="Plants" onClick={setActiveTab}
+            icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-4h6v4"/></svg>}
+          />
+        </nav>
 
-            {/* DISPATCH TAB */}
-            {activeTab === "dispatch" && (
-              <DispatchPanel onDispatched={handleDispatched} />
-            )}
-
-            {/* ROUTE TAB */}
-            {activeTab === "route" && (
-              <>
-                <RouteForm
-                  onEstimate={handleEstimate}
-                  loading={loading}
-                  route={route}
-                  simState={sim.simState}
-                />
-                {error && (
-                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-md-red/10 text-md-red text-sm">
-                    <span className="flex-shrink-0"></span>
-                    <p className="flex-1">{error}</p>
-                    <button onClick={() => setError(null)} className="text-xs opacity-60 hover:opacity-100 flex-shrink-0"></button>
-                  </div>
-                )}
-                {route && (
-                  <RouteDetails
-                    route={route}
-                    onSelectVariant={handleSelectVariant}
-                    simState={sim.simState}
-                    currentStepIndex={sim.currentStepIndex}
-                  />
-                )}
-                {!route && !loading && (
-                  <div className="p-4 rounded-xl bg-surface-container text-center space-y-2">
-                    <p className="text-sm text-on-surface-variant">Enter addresses above to calculate a route</p>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* TRIP TAB */}
-            {activeTab === "trip" && (
-              <div className="space-y-4">
-                <TripManagement
-                  trip={trip}
-                  onTripUpdated={setTrip}
-                />
-                <TripEventLog tripId={trip?.id ?? null} />
-              </div>
-            )}
-
-            {/* TRIPS LIST TAB */}
+        {/* Full-width panels: Trips & Plants (no map) */}
+        {(activeTab === "trips" || activeTab === "plants") && (
+          <div className="flex-1 overflow-y-auto sidebar-scroll bg-surface">
             {activeTab === "trips" && (
               <TripsListPanel
                 onViewTrip={async (t) => {
                   try {
-                    const [fullTrip, fullRoute] = await Promise.all([
-                      getTrip(t.id),
-                      getRoute(t.route_id),
-                    ]);
-                    setTrip(fullTrip);
-                    setRoute(fullRoute);
+                    const fullTrip = await getTrip(t.id);
+                    setViewedTrip(fullTrip);
                     setActiveTab("trip");
                   } catch {
                     showToast("Could not load trip details", "error");
@@ -260,130 +125,139 @@ export default function Home() {
                 }}
               />
             )}
+            {activeTab === "plants" && <PlantsPanel />}
           </div>
-
-          {/* Simulation controls — pinned at bottom when route exists */}
-          {route && activeTab === "route" && (
-            <div className="border-t border-outline-variant p-4 bg-surface flex-shrink-0">
-              <SimulationControls
-                simState={sim.simState}
-                progress={sim.progress}
-                remainingKm={sim.remainingKm}
-                trafficMsg={sim.trafficMsg}
-                speedMultiplier={sim.speedMultiplier}
-                currentSpeed={sim.currentSpeed}
-                onSpeedChange={sim.setSpeedMultiplier}
-                onToggle={sim.toggle}
-                onStop={sim.stop}
-              />
-            </div>
-          )}
-        </aside>
-
-        {/* Sidebar backdrop (mobile) */}
-        {sidebarOpen && (
-          <div
-            className="absolute inset-0 bg-black/20 z-10 md:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
         )}
 
-        {/* Right: map + info panel */}
-        <main className="flex-1 flex flex-col overflow-hidden">
-          {/* Map — 65% */}
-          <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
-            <MapView
-              route={route}
-              simState={sim.simState}
-              simProgress={sim.progress}
-              truckPosition={sim.truckPosition}
-              animationPoints={sim.animationPoints}
-              currentPointIndex={sim.currentPointIndex}
-            />
+        {/* Dispatch / Live Trip — content sidebar + map */}
+        {showMap && (
+          <>
+            {/* Content sidebar */}
+            <aside className="w-[380px] flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-4">
 
-            {/* Empty state overlay */}
-            {!route && !loading && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[400]">
-                <div className="text-center space-y-3 p-8 max-w-sm">
-                  <div className="flex justify-center">
-                    <TruckIcon size={80} />
+                {activeTab === "dispatch" && (
+                  <DispatchPanel onDispatched={handleDispatched} />
+                )}
+
+                {activeTab === "trip" && (
+                  <div className="space-y-4">
+                    {viewedTrip && (
+                      <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-surface-container border border-outline-variant text-xs text-on-surface-variant">
+                        <span>Viewing Trip #{viewedTrip.id}</span>
+                        <button onClick={() => setViewedTrip(null)}
+                          className="text-primary font-medium hover:opacity-70 transition-opacity">
+                          ← Back to live trip
+                        </button>
+                      </div>
+                    )}
+                    <TripManagement
+                      trip={viewedTrip ?? trip}
+                      onTripUpdated={(updated) => {
+                        if (viewedTrip && updated.id === viewedTrip.id) setViewedTrip(updated);
+                        else setTrip(updated);
+                      }}
+                    />
+                    <TripEventLog tripId={(viewedTrip ?? trip)?.id ?? null} />
                   </div>
-                  <h2 className="text-xl font-medium text-on-surface">Plan Your Delivery Route</h2>
-                  <p className="text-sm text-on-surface-variant leading-relaxed">
-                    Use the <strong>Dispatch</strong> tab to schedule a delivery, or the <strong>Route</strong> tab to manually plan a route.
-                  </p>
-                </div>
+                )}
               </div>
-            )}
 
-            {/* Loading overlay */}
-            {loading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/40 backdrop-blur-[2px] z-[400]">
-                <div className="flex flex-col items-center gap-3 p-6 rounded-2xl bg-white/90 shadow-xl">
-                  <svg className="animate-spin h-8 w-8 text-primary" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <p className="text-sm font-medium text-on-surface">Calculating route</p>
+              {activeTab === "trip" && (viewedTrip ?? trip) && (
+                <div className="border-t border-outline-variant p-4 bg-surface flex-shrink-0">
+                  <SimulationControls
+                    simState={sim.simState}
+                    progress={sim.progress}
+                    remainingKm={sim.remainingKm}
+                    trafficMsg={sim.trafficMsg}
+                    speedMultiplier={sim.speedMultiplier}
+                    currentSpeed={sim.currentSpeed}
+                    onSpeedChange={sim.setSpeedMultiplier}
+                    onToggle={sim.toggle}
+                    onStop={sim.stop}
+                  />
                 </div>
-              </div>
-            )}
+              )}
+            </aside>
 
-            <MapOverlay
-              simState={sim.simState}
-              progress={sim.progress}
-              remainingKm={sim.remainingKm}
-              destination={route?.resolved_end_address ?? ""}
-              trafficMsg={sim.trafficMsg}
-              currentSpeed={sim.currentSpeed}
-            />
-          </div>
-
-          {/* Info panel — 35% */}
-          <div
-            className="border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll"
-            style={{ flex: "0 0 35%", minHeight: 0 }}
-          >
-            {route ? (
-              <InfoPanel route={route} simState={sim.simState} simProgress={sim.progress} />
-            ) : trip ? (
-              <TripInfoPanel trip={trip} />
-            ) : (
-              <div className="flex items-center justify-center h-full text-on-surface-variant text-sm">
-                <div className="text-center space-y-2 p-6">
-                  <p className="text-2xl"></p>
-                  <p>Route or trip details will appear here</p>
-                </div>
+            {/* Map + info */}
+            <main className="flex-1 flex flex-col overflow-hidden">
+              <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
+                <MapView
+                  route={route}
+                  simState={sim.simState}
+                  simProgress={sim.progress}
+                  truckPosition={sim.truckPosition}
+                  animationPoints={sim.animationPoints}
+                  currentPointIndex={sim.currentPointIndex}
+                />
+                {!route && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[400]">
+                    <div className="text-center space-y-3 p-8 max-w-sm">
+                      <div className="flex justify-center">
+                        <TruckIcon size={80} />
+                      </div>
+                      <h2 className="text-xl font-medium text-on-surface">Plan Your Delivery Route</h2>
+                      <p className="text-sm text-on-surface-variant leading-relaxed">
+                        Use <strong>Dispatch</strong> to schedule a delivery.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <MapOverlay
+                  simState={sim.simState}
+                  progress={sim.progress}
+                  remainingKm={sim.remainingKm}
+                  destination={route?.resolved_end_address ?? ""}
+                  trafficMsg={sim.trafficMsg}
+                  currentSpeed={sim.currentSpeed}
+                />
               </div>
-            )}
-          </div>
-        </main>
+
+              <div className="border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll"
+                style={{ flex: "0 0 35%", minHeight: 0 }}>
+                {route ? (
+                  <InfoPanel route={route} simState={sim.simState} simProgress={sim.progress} />
+                ) : trip ? (
+                  <TripInfoPanel trip={trip} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-on-surface-variant text-sm">
+                    <div className="text-center space-y-2 p-6">
+                      <p className="text-2xl">🗺</p>
+                      <p>Route or trip details will appear here</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </main>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-/*  Tab button  */
-function TabBtn({
+/* Nav item */
+function NavItem({
   id, active, label, icon, onClick, badge, badgePulse,
 }: {
-  id: ActiveTab; active: ActiveTab; label: string; icon: string;
+  id: ActiveTab; active: ActiveTab; label: string; icon: React.ReactNode;
   onClick: (id: ActiveTab) => void; badge?: boolean; badgePulse?: boolean;
 }) {
   const isActive = id === active;
   return (
     <button
       onClick={() => onClick(id)}
-      className={`flex-1 flex items-center justify-center gap-1.5 py-3 text-sm font-medium border-b-2 transition-colors ${
+      className={`flex items-center gap-3 px-4 py-3 text-sm font-medium w-full text-left transition-colors relative ${
         isActive
-          ? "border-primary text-primary"
-          : "border-transparent text-on-surface-variant hover:text-on-surface"
+          ? "bg-primary/10 text-primary border-r-2 border-primary"
+          : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
       }`}
     >
-      <span>{icon}</span>
+      {icon}
       <span>{label}</span>
       {badge && (
-        <span className={`w-2 h-2 rounded-full bg-md-green ${badgePulse ? "animate-pulse" : ""}`} />
+        <span className={`ml-auto w-2 h-2 rounded-full bg-md-green ${badgePulse ? "animate-pulse" : ""}`} />
       )}
     </button>
   );

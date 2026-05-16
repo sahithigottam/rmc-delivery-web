@@ -230,6 +230,34 @@ export interface PlantOut {
   active: boolean;
 }
 
+export interface PlantCreate {
+  name: string;
+  brand: string;
+  address: string;
+  lat: number;
+  lng: number;
+  region: string;
+  active: boolean;
+}
+
+export interface PlantUpdate {
+  name?: string;
+  brand?: string;
+  address?: string;
+  lat?: number;
+  lng?: number;
+  region?: string;
+  active?: boolean;
+}
+
+export interface JobSite {
+  id: string;        // uuid generated client-side
+  name: string;      // friendly label e.g. "Newmarket Countdown"
+  address: string;
+  notes?: string;
+  created_at: string;
+}
+
 export interface PlantPredictionResult {
   plant: PlantOut;
   google_eta_minutes?: number;
