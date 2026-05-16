@@ -31,7 +31,9 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>("dispatch");
 
-  const sim = useSimulation(route);
+  // Pass active trip ID so simulation posts real GPS positions to the backend,
+  // driving the load timer, traffic monitor, and SSE alerts end-to-end.
+  const sim = useSimulation(route, trip?.status === "in_progress" ? trip.id : null);
 
   /* SSE connection for real-time trip updates */
   const { connected } = useTripStream({

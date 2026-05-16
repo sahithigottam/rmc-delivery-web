@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { checkReroute } from "@/lib/api";
+import { checkReroute, updateTripPosition } from "@/lib/api";
 import { decodePolyline, subsampleRoute } from "@/lib/polyline";
 import { showToast } from "@/components/Toast";
 import type { RouteResponse, SimState } from "@/types/route";
@@ -9,6 +9,8 @@ import type { RouteResponse, SimState } from "@/types/route";
 const TICK_MS = 1000; // animation interval - 1 second for real-time
 const SUBSAMPLE_N = 300; // number of animation points
 const REROUTE_CHECK_INTERVAL_MS = 120000; // check traffic every 2 minutes (real-time)
+// Post GPS position to backend every N simulated seconds (keeps API calls low)
+const POSITION_REPORT_INTERVAL_SIMULATED_S = 30;
 
 export interface SimulationState {
   simState: SimState;
@@ -26,7 +28,10 @@ export interface SimulationState {
   stop: () => void;
 }
 
-export function useSimulation(route: RouteResponse | null): SimulationState {
+export function useSimulation(
+  route: RouteResponse | null,
+  tripId?: number | null,
+): SimulationState {
   const [simState, setSimState] = useState<SimState>("idle");
   const [progress, setProgress] = useState(0);
   const [truckPosition, setTruckPosition] = useState<[number, number] | null>(null);
@@ -42,6 +47,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
   const lastTrafficCheckRef = useRef<number>(0);
+  const lastPositionReportRef = useRef<number>(0); // simulated seconds at last position POST
   const indexRef = useRef(0);
   const pointsRef = useRef<[number, number][]>([]);
   const reroutingRef = useRef(false);
@@ -192,6 +198,19 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
         checkTraffic(p);
       }
 
+      // ── Report position to live backend trip ───────────────────────
+      // Throttled to every POSITION_REPORT_INTERVAL_SIMULATED_S of simulated time.
+      // This drives the backend load timer, traffic monitor, and SSE alerts.
+      if (tripId) {
+        const lastReport = lastPositionReportRef.current;
+        if (elapsedSimulated - lastReport >= POSITION_REPORT_INTERVAL_SIMULATED_S) {
+          lastPositionReportRef.current = elapsedSimulated;
+          updateTripPosition(tripId, { lat: p[0], lng: p[1] }).catch(() => {
+            // silent — don't interrupt the simulation on backend errors
+          });
+        }
+      }
+
       // Finished
       if (prog >= 1 || idx >= pts.length - 1) {
         clearInterval(timerRef.current!);
@@ -221,6 +240,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
       pausedTimeRef.current = 0;
       startTimeRef.current = Date.now();
       lastTrafficCheckRef.current = Date.now();
+      lastPositionReportRef.current = 0;
 
       setAnimationPoints(smooth);
       setTruckPosition(smooth[0]);
