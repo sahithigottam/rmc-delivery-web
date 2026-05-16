@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getAllTrips, cancelTrip, deleteTrip } from "@/lib/api";
-import type { TripResponse, TripStatus } from "@/types/route";
+import { getAllTrips, cancelTrip, deleteTrip, getPlants } from "@/lib/api";
+import type { TripResponse, TripStatus, PlantOut } from "@/types/route";
 import TripStatusBadge from "@/components/TripStatusBadge";
 import { showToast } from "@/components/Toast";
 
@@ -29,8 +29,18 @@ export default function TripsListPanel({
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [mixFilter, setMixFilter] = useState("all");
+  const [brandFilter, setBrandFilter] = useState("all");
+  const [plantFilter, setPlantFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [plants, setPlants] = useState<PlantOut[]>([]);
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+
+  // Load plants for brand/plant filter labels
+  useEffect(() => {
+    getPlants().then(setPlants).catch(() => {});
+  }, []);
 
   const SS_KEY = "rmc_trip_history";
 
@@ -90,6 +100,15 @@ export default function TripsListPanel({
 
   const mixes = Array.from(new Set(trips.map((t) => t.concrete_mix).filter(Boolean))).sort() as string[];
 
+  // Derive brand/plant options from plants data (only those seen in trips)
+  const plantMap = Object.fromEntries(plants.map((p) => [p.id, p]));
+  const brands = Array.from(new Set(
+    trips.map((t) => t.plant_id ? plantMap[t.plant_id]?.brand : undefined).filter(Boolean)
+  )).sort() as string[];
+  const plantsForBrand = plants.filter(
+    (p) => brandFilter === "all" || p.brand === brandFilter
+  ).filter((p) => trips.some((t) => t.plant_id === p.id));
+
   function exportCSV() {
     const esc = (v: string | number | null | undefined) => {
       if (v == null) return "";
@@ -106,7 +125,7 @@ export default function TripsListPanel({
     const headers = [
       "Trip ID", "Status", "Outcome",
       "Mix", "Mix Code", "Grade", "Volume m³",
-      "Plant ID",
+      "Brand", "Plant",
       "From (full)", "To (full)",
       "Scheduled At (NZT)", "Started At (NZT)", "Completed At (NZT)",
       "Duration (min)",
@@ -123,10 +142,11 @@ export default function TripsListPanel({
         t.started_at && t.completed_at
           ? ((new Date(t.completed_at).getTime() - new Date(t.started_at).getTime()) / 60000).toFixed(1)
           : "";
+      const plant = t.plant_id ? plantMap[t.plant_id] : undefined;
       return [
         esc(t.id), esc(t.status), esc(t.outcome),
         esc(t.concrete_mix), esc(t.mix_code), esc(t.concrete_grade), esc(t.volume_m3),
-        esc(t.plant_id),
+        esc(plant?.brand ?? ""), esc(plant?.name ?? t.plant_id ?? ""),
         esc(t.start_address), esc(t.end_address),
         esc(fmtDate(t.scheduled_at)), esc(fmtDate(t.started_at)), esc(fmtDate(t.completed_at)),
         esc(actualDuration),
@@ -157,6 +177,20 @@ export default function TripsListPanel({
     if (statusFilter === "completed" && t.status !== "completed") return false;
     if (statusFilter === "cancelled" && t.status !== "cancelled") return false;
     if (mixFilter !== "all" && t.concrete_mix !== mixFilter) return false;
+    if (brandFilter !== "all") {
+      const tripBrand = t.plant_id ? plantMap[t.plant_id]?.brand : undefined;
+      if (tripBrand !== brandFilter) return false;
+    }
+    if (plantFilter !== "all" && t.plant_id !== plantFilter) return false;
+    if (dateFrom) {
+      const ref = t.scheduled_at ?? t.created_at;
+      if (!ref || ref < dateFrom) return false;
+    }
+    if (dateTo) {
+      const ref = t.scheduled_at ?? t.created_at;
+      const toEnd = dateTo + "T23:59:59";
+      if (!ref || ref > toEnd) return false;
+    }
     return true;
   });
 
@@ -208,6 +242,36 @@ export default function TripsListPanel({
             <option value="all">All mixes</option>
             {mixes.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
+        )}
+        {brands.length > 0 && (
+          <select value={brandFilter} onChange={(e) => { setBrandFilter(e.target.value); setPlantFilter("all"); }}
+            className="px-3 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary">
+            <option value="all">All brands</option>
+            {brands.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        )}
+        {plantsForBrand.length > 0 && (
+          <select value={plantFilter} onChange={(e) => setPlantFilter(e.target.value)}
+            className="px-3 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary">
+            <option value="all">All plants</option>
+            {plantsForBrand.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs text-on-surface-variant whitespace-nowrap">From</label>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs text-on-surface-variant whitespace-nowrap">To</label>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+            className="px-2 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary" />
+        </div>
+        {(statusFilter !== "all" || mixFilter !== "all" || brandFilter !== "all" || plantFilter !== "all" || dateFrom || dateTo) && (
+          <button onClick={() => { setStatusFilter("all"); setMixFilter("all"); setBrandFilter("all"); setPlantFilter("all"); setDateFrom(""); setDateTo(""); }}
+            className="text-xs text-on-surface-variant hover:text-on-surface transition-colors underline underline-offset-2">
+            Clear
+          </button>
         )}
         <span className="ml-auto text-xs text-on-surface-variant">{visible.length} shown</span>
       </div>
