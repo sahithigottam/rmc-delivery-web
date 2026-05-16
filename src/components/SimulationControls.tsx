@@ -9,6 +9,7 @@ interface SimulationControlsProps {
   remainingKm: number;
   trafficMsg: string | null;
   speedMultiplier: number;
+  currentSpeed?: number;
   onSpeedChange: (speed: number) => void;
   onToggle: () => void;
   onStop: () => void;
@@ -16,8 +17,9 @@ interface SimulationControlsProps {
 
 const SPEED_OPTIONS = [
   { value: 1, label: "1x (Real-time)" },
-  { value: 10, label: "10x" },
-  { value: 30, label: "30x" },
+  { value: 4, label: "4x (1hr = 15min)" },
+  { value: 10, label: "10x (1hr = 6min)" },
+  { value: 30, label: "30x (1hr = 2min)" },
   { value: 60, label: "60x (1hr = 1min)" },
   { value: 120, label: "120x (1hr = 30s)" },
   { value: 300, label: "300x (1hr = 12s)" },
@@ -29,6 +31,7 @@ export default function SimulationControls({
   remainingKm,
   trafficMsg,
   speedMultiplier,
+  currentSpeed = 0,
   onSpeedChange,
   onToggle,
   onStop,
@@ -78,8 +81,9 @@ export default function SimulationControls({
                 "⏸ Paused"
               ) : (
                 <span className="flex items-center gap-1.5">
-                  <TruckIcon size={16} /> {remainingKm.toFixed(1)} km remaining
-                </span>
+                  <TruckIcon size={16} /> {remainingKm.toFixed(1)} km remaining                  {currentSpeed > 0 && (
+                    <span className="text-xs text-on-surface-variant">· {currentSpeed} km/h</span>
+                  )}                </span>
               )}
             </span>
             <span className="text-xs text-on-surface-variant">{pct}%</span>

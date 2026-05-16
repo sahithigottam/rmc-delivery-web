@@ -131,13 +131,15 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
       .finally(() => setLoadingBrands(false));
   }, []);
 
-  // Set a sensible default departure time when entering step 3
+  // Set a sensible default departure time when entering step 3.
+  // Always expressed in NZST (UTC+12) so the value matches what NZ dispatchers expect.
   useEffect(() => {
     if (step === 3 && !scheduledAt) {
-      const d = new Date(Date.now() + 30 * 60_000);
+      const NZT_OFFSET_MS = 12 * 60 * 60 * 1000;
+      const d = new Date(Date.now() + NZT_OFFSET_MS + 30 * 60_000);
       const pad = (n: number) => String(n).padStart(2, "0");
       setScheduledAt(
-        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+        `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
       );
     }
   }, [step, scheduledAt]);
@@ -148,7 +150,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
     if (!jobSite.trim() || !jobSiteData) { showToast("Please enter and select a job site address", "error"); return; }
     setLoading(true);
     try {
-      const res = await analyseBrand({ brand, job_site_data: jobSiteData, concrete_mix: mix, top_n: 5 });
+      const res = await analyseBrand({ brand, job_site_data: jobSiteData as unknown as Record<string, unknown>, concrete_mix: mix, top_n: 5 });
       setAnalysis(res);
       setStep(2);
     } catch (e) {
@@ -171,7 +173,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
         plant_id: selected.plant.id,
         job_site_address: jobSite,
         concrete_mix: mix,
-        scheduled_at: new Date(scheduledAt).toISOString(),
+        scheduled_at: new Date(scheduledAt + ":00+12:00").toISOString(),
         vehicle_id: vehicleId || undefined,
         volume_m3: volumeM3 ? Number(volumeM3) : undefined,
         pour_duration_minutes: pourMin ? Number(pourMin) : undefined,
@@ -451,7 +453,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
           {/* Departure time */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
-              DEPARTURE DATE & TIME <span className="text-md-red">*</span>
+              DEPARTURE DATE & TIME (NZST) <span className="text-md-red">*</span>
             </label>
             <input
               type="datetime-local"

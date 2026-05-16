@@ -20,6 +20,7 @@ export interface SimulationState {
   remainingKm: number;
   trafficMsg: string | null;
   speedMultiplier: number;
+  currentSpeed: number;
   setSpeedMultiplier: (speed: number) => void;
   toggle: () => void;
   stop: () => void;
@@ -34,7 +35,8 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [remainingKm, setRemainingKm] = useState(0);
   const [trafficMsg, setTrafficMsg] = useState<string | null>(null);
-  const [speedMultiplier, setSpeedMultiplier] = useState(60); // Default 60x speed (1 hour = 1 minute)
+  const [speedMultiplier, setSpeedMultiplier] = useState(4); // Default 4x speed (1 hour = 15 minutes)
+  const [currentSpeed, setCurrentSpeed] = useState(0); // km/h
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(0);
@@ -159,6 +161,19 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
           stepIdx = i;
         }
         setCurrentStepIndex(stepIdx);
+
+        // Calculate current speed from step's distance/duration
+        const step = route.route_steps[stepIdx];
+        if (step && step.duration_seconds > 0) {
+          const speedKmh = (step.distance_meters / 1000) / (step.duration_seconds / 3600);
+          setCurrentSpeed(Math.round(speedKmh));
+        }
+      } else {
+        // Fallback: average speed from total route
+        if (route && route.duration_seconds > 0) {
+          const avgSpeed = (route.distance_meters / 1000) / (route.duration_seconds / 3600);
+          setCurrentSpeed(Math.round(avgSpeed));
+        }
       }
 
       // Check if behind schedule for rerouting
@@ -243,6 +258,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
     setCurrentPointIndex(0);
     setCurrentStepIndex(0);
     setRemainingKm(0);
+    setCurrentSpeed(0);
     setTrafficMsg(null);
   }, []);
 
@@ -271,6 +287,7 @@ export function useSimulation(route: RouteResponse | null): SimulationState {
     remainingKm,
     trafficMsg,
     speedMultiplier,
+    currentSpeed,
     setSpeedMultiplier,
     toggle,
     stop,

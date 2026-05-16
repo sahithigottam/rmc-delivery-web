@@ -13,6 +13,7 @@ import TripManagement from "@/components/TripManagement";
 import TripEventLog from "@/components/TripEventLog";
 import MapOverlay from "@/components/MapOverlay";
 import DispatchPanel from "@/components/DispatchPanel";
+import TripsListPanel from "@/components/TripsListPanel";
 import ToastContainer, { showToast } from "@/components/Toast";
 import TruckIcon from "@/components/TruckIcon";
 import type { RouteResponse, TripResponse, DispatchResponse, SimState } from "@/types/route";
@@ -20,7 +21,7 @@ import type { RouteResponse, TripResponse, DispatchResponse, SimState } from "@/
 /* Leaflet must not SSR */
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
-type ActiveTab = "dispatch" | "route" | "trip";
+type ActiveTab = "dispatch" | "route" | "trip" | "trips";
 
 export default function Home() {
   const [route, setRoute] = useState<RouteResponse | null>(null);
@@ -185,6 +186,7 @@ export default function Home() {
               badge={trip != null}
               badgePulse={liveTrip}
             />
+            <TabBtn id="trips" active={activeTab} label="Trips" icon="" onClick={setActiveTab} />
           </div>
 
           {/* Scrollable content */}
@@ -237,6 +239,25 @@ export default function Home() {
                 <TripEventLog tripId={trip?.id ?? null} />
               </div>
             )}
+
+            {/* TRIPS LIST TAB */}
+            {activeTab === "trips" && (
+              <TripsListPanel
+                onViewTrip={async (t) => {
+                  try {
+                    const [fullTrip, fullRoute] = await Promise.all([
+                      getTrip(t.id),
+                      getRoute(t.route_id),
+                    ]);
+                    setTrip(fullTrip);
+                    setRoute(fullRoute);
+                    setActiveTab("trip");
+                  } catch {
+                    showToast("Could not load trip details", "error");
+                  }
+                }}
+              />
+            )}
           </div>
 
           {/* Simulation controls — pinned at bottom when route exists */}
@@ -248,6 +269,7 @@ export default function Home() {
                 remainingKm={sim.remainingKm}
                 trafficMsg={sim.trafficMsg}
                 speedMultiplier={sim.speedMultiplier}
+                currentSpeed={sim.currentSpeed}
                 onSpeedChange={sim.setSpeedMultiplier}
                 onToggle={sim.toggle}
                 onStop={sim.stop}
@@ -311,6 +333,7 @@ export default function Home() {
               remainingKm={sim.remainingKm}
               destination={route?.resolved_end_address ?? ""}
               trafficMsg={sim.trafficMsg}
+              currentSpeed={sim.currentSpeed}
             />
           </div>
 

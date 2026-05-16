@@ -12,7 +12,7 @@ import type {
   TripRerouteInfo,
 } from "@/types/route";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 async function apiFetch<T>(
   path: string,
@@ -116,6 +116,10 @@ export async function startTrip(req: TripStartRequest): Promise<TripResponse> {
 
 export async function getActiveTrips(): Promise<TripResponse[]> {
   return apiFetch<TripResponse[]>("/trips/active");
+}
+
+export async function getAllTrips(limit = 100): Promise<TripResponse[]> {
+  return apiFetch<TripResponse[]>(`/trips/all?limit=${limit}`);
 }
 
 export async function getTrip(tripId: number): Promise<TripResponse> {

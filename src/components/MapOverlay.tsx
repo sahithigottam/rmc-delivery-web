@@ -8,6 +8,7 @@ interface MapOverlayProps {
   remainingKm: number;
   destination: string;
   trafficMsg: string | null;
+  currentSpeed?: number;
 }
 
 export default function MapOverlay({
@@ -16,6 +17,7 @@ export default function MapOverlay({
   remainingKm,
   destination,
   trafficMsg,
+  currentSpeed = 0,
 }: MapOverlayProps) {
   if (simState === "idle") return null;
 
@@ -70,6 +72,11 @@ export default function MapOverlay({
         <span>
           Progress: <strong className="text-on-surface">{pct}%</strong>
         </span>
+        {!isFinished && simState === "running" && currentSpeed > 0 && (
+          <span>
+            Speed: <strong className="text-on-surface">{currentSpeed} km/h</strong>
+          </span>
+        )}
       </div>
 
       {/* Traffic message */}
