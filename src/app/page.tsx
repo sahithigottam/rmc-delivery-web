@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useState } from "react";
 import { getTrip, getRoute } from "@/lib/api";
 import { useSimulation } from "@/hooks/useSimulation";
+import { useGpsTracking } from "@/hooks/useGpsTracking";
 import { useTripStream } from "@/hooks/useTripStream";
 import SimulationControls from "@/components/SimulationControls";
 import TripManagement from "@/components/TripManagement";
@@ -26,10 +27,20 @@ export default function Home() {
   const [trip, setTrip] = useState<TripResponse | null>(null);
   const [viewedTrip, setViewedTrip] = useState<TripResponse | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("dispatch");
+  const [gpsMode, setGpsMode] = useState(false);
 
-  // Pass active trip ID so simulation posts real GPS positions to the backend,
-  // driving the load timer, traffic monitor, and SSE alerts end-to-end.
-  const sim = useSimulation(route, trip?.status === "in_progress" ? trip.id : null);
+  // Simulation mode — animates truck along polyline
+  const sim = useSimulation(route, !gpsMode && trip?.status === "in_progress" ? trip.id : null);
+
+  // Real GPS mode — uses device location
+  const gps = useGpsTracking(
+    route,
+    gpsMode && trip?.status === "in_progress" ? trip.id : null,
+    gpsMode,
+  );
+
+  // Effective truck position: GPS when active, simulation otherwise
+  const activeTruckPosition = gpsMode && gps.gpsPosition ? gps.gpsPosition : sim.truckPosition;
 
   /* SSE connection for real-time trip updates */
   const { connected } = useTripStream({
@@ -175,6 +186,16 @@ export default function Home() {
                     onSpeedChange={sim.setSpeedMultiplier}
                     onToggle={sim.toggle}
                     onStop={sim.stop}
+                    gpsMode={gpsMode}
+                    onGpsModeChange={(on) => { setGpsMode(on); if (!on) gps.stop(); }}
+                    gpsState={gps.gpsState}
+                    gpsAccuracy={gps.gpsAccuracy}
+                    gpsSpeed={gps.gpsSpeed}
+                    gpsError={gps.gpsError}
+                    gpsRemainingKm={gps.remainingKm}
+                    gpsTrafficMsg={gps.trafficMsg}
+                    onGpsStart={gps.start}
+                    onGpsStop={gps.stop}
                   />
                 </div>
               )}
@@ -185,11 +206,11 @@ export default function Home() {
               <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
                 <MapView
                   route={route}
-                  simState={sim.simState}
+                  simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
                   simProgress={sim.progress}
-                  truckPosition={sim.truckPosition}
-                  animationPoints={sim.animationPoints}
-                  currentPointIndex={sim.currentPointIndex}
+                  truckPosition={activeTruckPosition}
+                  animationPoints={gpsMode ? [] : sim.animationPoints}
+                  currentPointIndex={gpsMode ? 0 : sim.currentPointIndex}
                 />
                 {!route && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[400]">
@@ -205,12 +226,12 @@ export default function Home() {
                   </div>
                 )}
                 <MapOverlay
-                  simState={sim.simState}
+                  simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
                   progress={sim.progress}
-                  remainingKm={sim.remainingKm}
+                  remainingKm={gpsMode ? gps.remainingKm : sim.remainingKm}
                   destination={route?.resolved_end_address ?? ""}
-                  trafficMsg={sim.trafficMsg}
-                  currentSpeed={sim.currentSpeed}
+                  trafficMsg={gpsMode ? gps.trafficMsg : sim.trafficMsg}
+                  currentSpeed={gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed}
                 />
               </div>
 
