@@ -58,6 +58,27 @@ body {
   border-radius: 4px;
 }
 
+/* Responsive map / info-panel split */
+.map-container {
+  position: relative;
+  flex: 0 0 65%;
+  min-height: 0;
+}
+.map-info-panel {
+  flex: 0 0 35%;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--outline-variant, #cac4d0);
+}
+@media (max-width: 767px) {
+  .map-container {
+    flex: 1 1 auto;
+  }
+  .map-info-panel {
+    display: none;
+  }
+}
+
 /* Selection color */
 ::selection {
   background: #eaddff;

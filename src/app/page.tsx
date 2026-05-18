@@ -28,6 +28,7 @@ export default function Home() {
   const [viewedTrip, setViewedTrip] = useState<TripResponse | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("dispatch");
   const [gpsMode, setGpsMode] = useState(false);
+  const [showMobileMap, setShowMobileMap] = useState(false);
 
   // Simulation mode — animates truck along polyline
   const sim = useSimulation(route, !gpsMode && trip?.status === "in_progress" ? trip.id : null);
@@ -100,11 +101,11 @@ export default function Home() {
         )}
       </header>
 
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Body — bottom-padded on mobile to clear fixed bottom tab bar */}
+      <div className="flex flex-1 overflow-hidden pb-16 md:pb-0">
 
         {/* Left nav */}
-        <nav className="w-52 flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col py-2 z-20">
+        <nav className="hidden md:flex w-52 flex-shrink-0 bg-surface border-r border-outline-variant flex-col py-2 z-20">
           <NavItem id="dispatch" active={activeTab} label="Dispatch" onClick={setActiveTab}
             icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>}
           />
@@ -144,7 +145,7 @@ export default function Home() {
         {showMap && (
           <>
             {/* Content sidebar */}
-            <aside className="w-[380px] flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col overflow-hidden">
+            <aside className={`${showMobileMap ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-[380px] md:flex-shrink-0 bg-surface md:border-r border-outline-variant overflow-hidden`}>
               <div className="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-4">
 
                 {activeTab === "dispatch" && (
@@ -202,8 +203,8 @@ export default function Home() {
             </aside>
 
             {/* Map + info */}
-            <main className="flex-1 flex flex-col overflow-hidden">
-              <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
+            <main className={`${showMobileMap ? 'flex' : 'hidden md:flex'} flex-1 flex-col overflow-hidden relative`}>
+              <div className="map-container">
                 <MapView
                   route={route}
                   simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
@@ -235,8 +236,7 @@ export default function Home() {
                 />
               </div>
 
-              <div className="border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll"
-                style={{ flex: "0 0 35%", minHeight: 0 }}>
+              <div className="map-info-panel bg-surface sidebar-scroll">
                 {route ? (
                   <InfoPanel route={route} simState={sim.simState} simProgress={sim.progress} />
                 ) : trip ? (
@@ -251,14 +251,74 @@ export default function Home() {
                 )}
               </div>
             </main>
+
+            {/* Mobile: FAB to toggle between form and map */}
+            {!showMobileMap ? (
+              <button
+                onClick={() => setShowMobileMap(true)}
+                className="md:hidden fixed bottom-20 right-4 z-[500] bg-primary text-on-primary shadow-lg px-4 py-3 rounded-2xl text-sm font-semibold flex items-center gap-2"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                Map
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowMobileMap(false)}
+                className="md:hidden fixed top-16 left-3 z-[500] bg-surface/95 backdrop-blur-sm text-on-surface shadow-md px-3 py-2 rounded-xl text-sm font-medium flex items-center gap-1.5 border border-outline-variant"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+                Form
+              </button>
+            )}
           </>
         )}
       </div>
+
+      {/* Mobile bottom tab bar */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface border-t border-outline-variant flex items-stretch z-30 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+        <BottomTab id="dispatch" active={activeTab} label="Dispatch" onClick={(id) => { setActiveTab(id); setShowMobileMap(false); }}
+          icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>}
+        />
+        <BottomTab id="trip" active={activeTab} label="Live Trip" onClick={(id) => { setActiveTab(id); setShowMobileMap(false); }}
+          badge={trip != null} badgePulse={liveTrip}
+          icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>}
+        />
+        <BottomTab id="trips" active={activeTab} label="Trips" onClick={(id) => { setActiveTab(id); setShowMobileMap(false); }}
+          icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>}
+        />
+        <BottomTab id="plants" active={activeTab} label="Plants" onClick={(id) => { setActiveTab(id); setShowMobileMap(false); }}
+          icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-4h6v4"/></svg>}
+        />
+      </nav>
     </div>
   );
 }
 
-/* Nav item */
+/* Mobile bottom tab */
+function BottomTab({
+  id, active, label, icon, onClick, badge, badgePulse,
+}: {
+  id: ActiveTab; active: ActiveTab; label: string; icon: React.ReactNode;
+  onClick: (id: ActiveTab) => void; badge?: boolean; badgePulse?: boolean;
+}) {
+  const isActive = id === active;
+  return (
+    <button
+      onClick={() => onClick(id)}
+      className={`flex-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors relative ${
+        isActive ? "text-primary" : "text-on-surface-variant"
+      }`}
+    >
+      <div className={`p-1 rounded-xl transition-colors ${isActive ? "bg-primary/10" : ""}`}>
+        {icon}
+      </div>
+      <span>{label}</span>
+      {badge && (
+        <span className={`absolute top-2 right-[calc(50%-14px)] w-2 h-2 rounded-full bg-md-green ${badgePulse ? "animate-pulse" : ""}`} />
+      )}
+    </button>
+  );
+}
 function NavItem({
   id, active, label, icon, onClick, badge, badgePulse,
 }: {
