@@ -206,11 +206,12 @@ export default function Home() {
               <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
                 <MapView
                   route={route}
-                  simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
+                  simState={!gpsMode ? sim.simState : "idle"}
                   simProgress={sim.progress}
                   truckPosition={activeTruckPosition}
-                  animationPoints={gpsMode ? [] : sim.animationPoints}
-                  currentPointIndex={gpsMode ? 0 : sim.currentPointIndex}
+                  animationPoints={sim.animationPoints}
+                  currentPointIndex={sim.currentPointIndex}
+                  currentLocation={gpsMode ? gps.gpsPosition : null}
                 />
                 {!route && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[400]">

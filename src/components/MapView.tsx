@@ -25,6 +25,7 @@ interface MapViewProps {
   truckPosition: [number, number] | null;
   animationPoints: [number, number][];
   currentPointIndex: number;
+  currentLocation?: [number, number] | null;
 }
 
 export default function MapView({
@@ -33,6 +34,7 @@ export default function MapView({
   truckPosition,
   animationPoints,
   currentPointIndex,
+  currentLocation,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -41,6 +43,7 @@ export default function MapView({
   const traversedLayerRef = useRef<L.Polyline | null>(null);
   const remainingLayerRef = useRef<L.Polyline | null>(null);
   const truckMarkerRef = useRef<L.Marker | null>(null);
+  const currentLocationMarkerRef = useRef<L.Marker | null>(null);
 
   /* ── Initialize map once ── */
   useEffect(() => {
@@ -229,6 +232,36 @@ export default function MapView({
       );
     }
   }, [truckPosition, currentPointIndex, animationPoints]);
+
+  /* ── Update current GPS location marker ── */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (currentLocation) {
+      if (!currentLocationMarkerRef.current) {
+        const gpsIcon = L.divIcon({
+          html: '<img src="https://img.freepik.com/free-vector/truck-cement-mixer-cartoon-vector-icon-illustration-transportation-vehicle-icon-isolated-flat_138676-13348.jpg" alt="GPS Truck" style="width:40px;height:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));border-radius:50%;background:white;padding:2px;opacity:0.8;" />',
+          iconSize: [44, 44],
+          iconAnchor: [22, 22],
+          className: "",
+        });
+        currentLocationMarkerRef.current = L.marker(currentLocation, {
+          icon: gpsIcon,
+          zIndexOffset: 500,
+        })
+          .bindPopup("Current GPS Location")
+          .addTo(map) as L.Marker;
+      } else {
+        currentLocationMarkerRef.current.setLatLng(currentLocation);
+      }
+    } else {
+      if (currentLocationMarkerRef.current) {
+        map.removeLayer(currentLocationMarkerRef.current);
+        currentLocationMarkerRef.current = null;
+      }
+    }
+  }, [currentLocation]);
 
   /* ── Replace remaining polyline on reroute ── */
   // This is handled by the parent passing new animationPoints
