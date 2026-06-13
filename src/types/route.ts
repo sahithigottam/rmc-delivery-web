@@ -100,7 +100,7 @@ export type SimState = "idle" | "running" | "paused" | "finished";
 
 /* â”€â”€ Trip types â”€â”€ */
 
-export type TripStatus = "pending" | "in_progress" | "paused" | "completed" | "cancelled";
+export type TripStatus = "pending" | "in_progress" | "paused" | "completed" | "cancelled" | "delayed";
 
 export type TripEventType = 
   | "trip_started"
@@ -192,6 +192,7 @@ export interface TripResponse {
   scheduled_at?: string;
   concrete_mix?: string;
   outcome?: string;
+  driver_id?: string;  // Assigned driver for multi-truck dispatch
 }
 
 export interface TripRerouteInfo {
@@ -298,6 +299,11 @@ export interface DispatchRequest {
   volume_m3?: number;
   pour_duration_minutes?: number;
   prediction_snapshot?: Record<string, unknown>;
+  num_trucks?: number;
+  total_quantity_m3?: number;
+  pouring_mechanism?: string;
+  simultaneous_pour_points?: number;
+  driver_id?: string;  // For assigning trips to specific drivers
 }
 
 export interface DispatchResponse {

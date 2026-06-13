@@ -180,6 +180,18 @@ export async function cancelTrip(tripId: number): Promise<TripResponse> {
   });
 }
 
+export async function markTripPending(tripId: number): Promise<TripResponse> {
+  return apiFetch<TripResponse>(`/trips/${tripId}/mark-pending`, {
+    method: "POST",
+  });
+}
+
+export async function markTripDelayed(tripId: number): Promise<TripResponse> {
+  return apiFetch<TripResponse>(`/trips/${tripId}/mark-delayed`, {
+    method: "POST",
+  });
+}
+
 export function getTripStreamURL(tripId: number): string {
   return `${API}/trips/${tripId}/stream`;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getAllTrips, cancelTrip, deleteTrip, getPlants } from "@/lib/api";
+import { getAllTrips, cancelTrip, deleteTrip, completeTrip, markTripPending, markTripDelayed, getPlants } from "@/lib/api";
 import type { TripResponse, TripStatus, PlantOut } from "@/types/route";
 import TripStatusBadge from "@/components/TripStatusBadge";
 import { showToast } from "@/components/Toast";
@@ -27,6 +27,9 @@ export default function TripsListPanel({
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [completingId, setCompletingId] = useState<number | null>(null);
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [delayedId, setDelayedId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [mixFilter, setMixFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
@@ -36,6 +39,9 @@ export default function TripsListPanel({
   const [plants, setPlants] = useState<PlantOut[]>([]);
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [confirmComplete, setConfirmComplete] = useState<number | null>(null);
+  const [confirmPending, setConfirmPending] = useState<number | null>(null);
+  const [confirmDelayed, setConfirmDelayed] = useState<number | null>(null);
 
   // Load plants for brand/plant filter labels
   useEffect(() => {
@@ -96,6 +102,51 @@ export default function TripsListPanel({
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Delete failed", "error");
     } finally { setDeletingId(null); setConfirmDelete(null); }
+  };
+
+  const handleComplete = async (tripId: number) => {
+    setCompletingId(tripId);
+    try {
+      await completeTrip(tripId);
+      showToast(`Trip #${tripId} marked done`, "success");
+      setTrips((prev) => {
+        const updated = prev.map((t) => t.id === tripId ? { ...t, status: "completed" as TripStatus } : t);
+        writeHistory(updated);
+        return updated;
+      });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Complete failed", "error");
+    } finally { setCompletingId(null); setConfirmComplete(null); }
+  };
+
+  const handleMarkPending = async (tripId: number) => {
+    setPendingId(tripId);
+    try {
+      await markTripPending(tripId);
+      showToast(`Trip #${tripId} marked pending`, "success");
+      setTrips((prev) => {
+        const updated = prev.map((t) => t.id === tripId ? { ...t, status: "pending" as TripStatus } : t);
+        writeHistory(updated);
+        return updated;
+      });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Mark pending failed", "error");
+    } finally { setPendingId(null); setConfirmPending(null); }
+  };
+
+  const handleMarkDelayed = async (tripId: number) => {
+    setDelayedId(tripId);
+    try {
+      await markTripDelayed(tripId);
+      showToast(`Trip #${tripId} marked delayed`, "success");
+      setTrips((prev) => {
+        const updated = prev.map((t) => t.id === tripId ? { ...t, status: "delayed" as TripStatus } : t);
+        writeHistory(updated);
+        return updated;
+      });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Mark delayed failed", "error");
+    } finally { setDelayedId(null); setConfirmDelayed(null); }
   };
 
   const mixes = Array.from(new Set(trips.map((t) => t.concrete_mix).filter(Boolean))).sort() as string[];
@@ -176,6 +227,7 @@ export default function TripsListPanel({
     if (statusFilter === "in_progress" && t.status !== "in_progress") return false;
     if (statusFilter === "completed" && t.status !== "completed") return false;
     if (statusFilter === "cancelled" && t.status !== "cancelled") return false;
+    if (statusFilter === "delayed" && t.status !== "delayed") return false;
     if (mixFilter !== "all" && t.concrete_mix !== mixFilter) return false;
     if (brandFilter !== "all") {
       const tripBrand = t.plant_id ? plantMap[t.plant_id]?.brand : undefined;
@@ -235,6 +287,7 @@ export default function TripsListPanel({
           <option value="in_progress">In Progress</option>
           <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
+          <option value="delayed">Delayed</option>
         </select>
         {mixes.length > 0 && (
           <select value={mixFilter} onChange={(e) => setMixFilter(e.target.value)}
@@ -303,13 +356,6 @@ export default function TripsListPanel({
             </thead>
             <tbody className="divide-y divide-outline-variant/50">
               {visible.map((trip) => {
-                const canCancel = trip.status === "pending" || trip.status === "in_progress" || trip.status === "paused";
-                const canDelete = trip.status === "cancelled" || trip.status === "completed";
-                const isConfirming = confirmCancel === trip.id;
-                const isCancelling = cancellingId === trip.id;
-                const isConfirmingDelete = confirmDelete === trip.id;
-                const isDeleting = deletingId === trip.id;
-
                 return (
                   <tr key={trip.id} className="hover:bg-surface-container/50 transition-colors">
                     <td className="px-4 py-3">
@@ -339,25 +385,81 @@ export default function TripsListPanel({
                       {trip.scheduled_at ? formatNZT(trip.scheduled_at) : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="flex items-center justify-end gap-1 flex-wrap">
                         {onViewTrip && (
                           <button onClick={() => onViewTrip(trip)}
                             className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">
                             View
                           </button>
                         )}
-                        {canCancel && !isConfirming && (
-                          <button onClick={() => setConfirmCancel(trip.id)} disabled={isCancelling}
-                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-md-red border border-md-red/30 hover:bg-md-red/5 transition-colors disabled:opacity-40">
-                            Cancel
+                        {trip.status !== "completed" && !confirmComplete && (
+                          <button onClick={() => setConfirmComplete(trip.id)} disabled={completingId === trip.id}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-emerald-600 border border-emerald-600/30 hover:bg-emerald-600/5 transition-colors disabled:opacity-40">
+                            Done
                           </button>
                         )}
-                        {isConfirming && (
+                        {confirmComplete === trip.id && (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleComplete(trip.id)} disabled={completingId === trip.id}
+                              className="px-2 py-1 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:opacity-80 disabled:opacity-40">
+                              {completingId === trip.id ? "…" : "Yes"}
+                            </button>
+                            <button onClick={() => setConfirmComplete(null)}
+                              className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">
+                              No
+                            </button>
+                          </div>
+                        )}
+                        {trip.status !== "delayed" && trip.status !== "completed" && trip.status !== "cancelled" && !confirmDelayed && (
+                          <button onClick={() => setConfirmDelayed(trip.id)} disabled={delayedId === trip.id}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-amber-600 border border-amber-600/30 hover:bg-amber-600/5 transition-colors disabled:opacity-40">
+                            Delay
+                          </button>
+                        )}
+                        {confirmDelayed === trip.id && (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleMarkDelayed(trip.id)} disabled={delayedId === trip.id}
+                              className="px-2 py-1 rounded-lg text-xs font-medium bg-amber-600 text-white hover:opacity-80 disabled:opacity-40">
+                              {delayedId === trip.id ? "…" : "Yes"}
+                            </button>
+                            <button onClick={() => setConfirmDelayed(null)}
+                              className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">
+                              No
+                            </button>
+                          </div>
+                        )}
+                        {trip.status !== "pending" && trip.status !== "completed" && trip.status !== "cancelled" && !confirmPending && (
+                          <button onClick={() => setConfirmPending(trip.id)} disabled={pendingId === trip.id}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-blue-600 border border-blue-600/30 hover:bg-blue-600/5 transition-colors disabled:opacity-40">
+                            Pending
+                          </button>
+                        )}
+                        {confirmPending === trip.id && (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleMarkPending(trip.id)} disabled={pendingId === trip.id}
+                              className="px-2 py-1 rounded-lg text-xs font-medium bg-blue-600 text-white hover:opacity-80 disabled:opacity-40">
+                              {pendingId === trip.id ? "…" : "Yes"}
+                            </button>
+                            <button onClick={() => setConfirmPending(null)}
+                              className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">
+                              No
+                            </button>
+                          </div>
+                        )}
+                        {trip.status === "pending" || trip.status === "in_progress" || trip.status === "paused" ? (
+                          !confirmCancel && (
+                            <button onClick={() => setConfirmCancel(trip.id)} disabled={cancellingId === trip.id}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium text-md-red border border-md-red/30 hover:bg-md-red/5 transition-colors disabled:opacity-40">
+                              Cancel
+                            </button>
+                          )
+                        ) : null}
+                        {confirmCancel === trip.id && (
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-on-surface-variant">Sure?</span>
-                            <button onClick={() => handleCancel(trip.id)} disabled={isCancelling}
+                            <button onClick={() => handleCancel(trip.id)} disabled={cancellingId === trip.id}
                               className="px-2 py-1 rounded-lg text-xs font-medium bg-md-red text-white hover:opacity-80 disabled:opacity-40">
-                              {isCancelling ? "…" : "Yes"}
+                              {cancellingId === trip.id ? "…" : "Yes"}
                             </button>
                             <button onClick={() => setConfirmCancel(null)}
                               className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">
@@ -365,18 +467,20 @@ export default function TripsListPanel({
                             </button>
                           </div>
                         )}
-                        {canDelete && !isConfirmingDelete && (
-                          <button onClick={() => setConfirmDelete(trip.id)} disabled={isDeleting}
-                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors disabled:opacity-40">
-                            Delete
-                          </button>
-                        )}
-                        {isConfirmingDelete && (
+                        {trip.status === "cancelled" || trip.status === "completed" ? (
+                          !confirmDelete && (
+                            <button onClick={() => setConfirmDelete(trip.id)} disabled={deletingId === trip.id}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors disabled:opacity-40">
+                              Delete
+                            </button>
+                          )
+                        ) : null}
+                        {confirmDelete === trip.id && (
                           <div className="flex items-center gap-1">
                             <span className="text-xs text-on-surface-variant">Delete?</span>
-                            <button onClick={() => handleDelete(trip.id)} disabled={isDeleting}
+                            <button onClick={() => handleDelete(trip.id)} disabled={deletingId === trip.id}
                               className="px-2 py-1 rounded-lg text-xs font-medium bg-md-red text-white hover:opacity-80 disabled:opacity-40">
-                              {isDeleting ? "…" : "Yes"}
+                              {deletingId === trip.id ? "…" : "Yes"}
                             </button>
                             <button onClick={() => setConfirmDelete(null)}
                               className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">

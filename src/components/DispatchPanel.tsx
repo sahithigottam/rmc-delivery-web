@@ -121,6 +121,36 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   const [analysisKey, setAnalysisKey] = useState("");
   // User-chosen plant (optional — falls back to best from analysis)
   const [selectedPlantId, setSelectedPlantId] = useState<string | null>(null);
+  // Multi-truck dispatch state
+  const [numTrucks, setNumTrucks] = useState("1");
+  const [totalQuantity, setTotalQuantity] = useState("6");
+  const [dispatchDateTime, setDispatchDateTime] = useState("");
+  const [pouringMechanism, setPouringMechanism] = useState("");
+  const [simultaneousPourPoints, setSimultaneousPourPoints] = useState("");
+
+  // Auto-select pouring configuration based on truck count
+  useEffect(() => {
+    const trucks = parseInt(numTrucks) || 1;
+    const quantity = parseFloat(totalQuantity) || 6;
+    
+    // Auto-select mechanism
+    let mechanism = "pump";
+    let pourPoints = 1;
+    
+    if (trucks === 1) {
+      mechanism = "pump";
+      pourPoints = 1;
+    } else if (trucks <= 3) {
+      mechanism = "pump";
+      pourPoints = 2;
+    } else {
+      mechanism = "boom";
+      pourPoints = Math.min(3, Math.ceil(trucks / 2));
+    }
+    
+    setPouringMechanism(mechanism);
+    setSimultaneousPourPoints(String(pourPoints));
+  }, [numTrucks]);
 
   // Step 3 state
   const [scheduledAt, setScheduledAt] = useState("");
@@ -204,28 +234,48 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   const handleDispatch = async () => {
     if (!effectivePlant) { showToast("Select a brand and plant", "error"); return; }
     if (!jobSiteData) { showToast("Enter a job site address", "error"); return; }
-    if (!scheduledAt) { showToast("Set a departure time", "error"); return; }
+    // Use dispatch datetime from Step 1 if available, otherwise scheduledAt from Step 3
+    const finalDateTime = dispatchDateTime || scheduledAt;
+    if (!finalDateTime) { showToast("Set a departure time", "error"); return; }
     setLoading(true);
     try {
-      const resp = await dispatchTrip({
-        plant_id: effectivePlant.plant.id,
-        job_site_address: jobSite,
-        concrete_mix: mix,
-        scheduled_at: new Date(scheduledAt + ":00+12:00").toISOString(),
-        vehicle_id: vehicleId || undefined,
-        volume_m3: volumeM3 ? Number(volumeM3) : undefined,
-        pour_duration_minutes: pourMin ? Number(pourMin) : undefined,
-        prediction_snapshot: {
-          google_eta_minutes: effectivePlant.google_eta_minutes,
-          adjusted_eta_minutes: effectivePlant.adjusted_eta_minutes,
-          remaining_life_minutes: effectivePlant.remaining_life_minutes,
-          risk_level: effectivePlant.risk_level,
-          success_probability: effectivePlant.success_probability,
-        },
-      });
-      setDispatched(resp);
-      onDispatched(resp);
-      showToast(`✅ Trip #${resp.trip_id} scheduled`, "success");
+      const numTrucksValue = numTrucks ? Number(numTrucks) : 1;
+      const totalQtyValue = totalQuantity ? Number(totalQuantity) : 0;
+      const perTruckQty = totalQtyValue / numTrucksValue;
+      
+      // For multi-truck dispatch: create separate trips for each driver in round-robin
+      const drivers = ["driver1", "driver2", "driver3"];
+      let lastResponse: any = null;
+      
+      for (let i = 0; i < numTrucksValue; i++) {
+        const assignedDriver = drivers[i % drivers.length];
+        const resp = await dispatchTrip({
+          plant_id: effectivePlant.plant.id,
+          job_site_address: jobSite,
+          concrete_mix: mix,
+          scheduled_at: new Date(finalDateTime + ":00+12:00").toISOString(),
+          vehicle_id: vehicleId || undefined,
+          volume_m3: perTruckQty,
+          pour_duration_minutes: pourMin ? Number(pourMin) : undefined,
+          num_trucks: 1,  // Each trip is for 1 truck
+          total_quantity_m3: perTruckQty,
+          pouring_mechanism: pouringMechanism,
+          simultaneous_pour_points: 1,
+          driver_id: assignedDriver,  // Assign to driver in round-robin
+          prediction_snapshot: {
+            google_eta_minutes: effectivePlant.google_eta_minutes,
+            adjusted_eta_minutes: effectivePlant.adjusted_eta_minutes,
+            remaining_life_minutes: effectivePlant.remaining_life_minutes,
+            risk_level: effectivePlant.risk_level,
+            success_probability: effectivePlant.success_probability,
+          },
+        });
+        lastResponse = resp;
+      }
+      
+      setDispatched(lastResponse);
+      onDispatched(lastResponse);
+      showToast(`✅ ${numTrucksValue} trips dispatched: driver1, driver2, driver3 assigned (round-robin)`, "success");
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Dispatch failed", "error");
     } finally {
@@ -245,6 +295,11 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
     setJobSiteData(null);
     setVolumeM3("6");
     setPourMin("");
+    setNumTrucks("1");
+    setTotalQuantity("6");
+    setDispatchDateTime("");
+    setPouringMechanism("pump");
+    setSimultaneousPourPoints("1");
   };
 
   const concreteWindow = CONCRETE_WINDOWS[mix];
@@ -359,6 +414,61 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
             disabled={loading}
           />
 
+          {/* Trucks & Quantity */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">NUMBER OF TRUCKS</label>
+              <input type="number" value={numTrucks} onChange={(e) => setNumTrucks(e.target.value)}
+                placeholder="1" min="1" max="10" step="1"
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">CONCRETE QUANTITY (m³)</label>
+              <input type="number" value={totalQuantity} onChange={(e) => setTotalQuantity(e.target.value)}
+                placeholder="6.0" min="0.5" max="100" step="0.5"
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
+            </div>
+          </div>
+
+          {/* Dispatch Date & Time */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">DISPATCH DATE & TIME (NZST)</label>
+            <input type="datetime-local" value={dispatchDateTime} onChange={(e) => setDispatchDateTime(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
+          </div>
+
+          {/* Pouring Configuration — Auto-selected based on truck count */}
+          <div className="p-2 rounded-lg bg-primary/5 border border-primary/20">
+            <p className="text-[10px] font-semibold text-primary mb-2">🤖 POURING SETUP (Auto-selected • Editable)</p>
+            
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">POURING MECHANISM</label>
+              <select value={pouringMechanism} onChange={(e) => setPouringMechanism(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors">
+                <option value="auto">Auto (System Decides)</option>
+                <option value="pump">Concrete Pump</option>
+                <option value="boom">Boom Truck</option>
+                <option value="manual">Manual (Chute)</option>
+                <option value="pipeline">Pipeline System</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">SIMULTANEOUS POUR POINTS</label>
+              <input type="number" value={simultaneousPourPoints} onChange={(e) => setSimultaneousPourPoints(e.target.value)}
+                placeholder="1" min="1" max="5" step="1"
+                disabled={pouringMechanism === "auto"}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60 disabled:cursor-not-allowed" />
+              <p className="text-xs text-on-surface-variant">
+                {pouringMechanism === "auto" 
+                  ? "System will automatically optimize spacing based on truck count and quantity"
+                  : parseInt(numTrucks) <= 1 ? "Single pour point for this delivery"
+                  : parseInt(numTrucks) <= 3 ? "2 simultaneous pours recommended for efficient delivery"
+                  : "Multiple pour points for parallel operations"}
+              </p>
+            </div>
+          </div>
+
           {/* Analyse button */}
           {jobSiteData && brand && (
             <button onClick={handleAnalyse} disabled={analysing}
@@ -402,90 +512,24 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
             );
           })()}
 
-          {/* CTA */}
+          {/* CTA - Direct to trucks schedule */}
           <button
-            onClick={() => setStep(3)}
-            disabled={!jobSiteData || !brand || (!effectivePlant)}
+            onClick={handleDispatch}
+            disabled={!jobSiteData || !brand || (!effectivePlant) || loading}
             className="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold text-sm shadow-sm hover:shadow-md transition-all disabled:opacity-40 active:scale-[0.98]"
           >
-            {effectivePlant
-              ? `Schedule with ${effectivePlant.plant.name} →`
-              : "Select brand & job site to continue"}
-          </button>
-        </div>
-      )}
-
-      {/*  Step 3: Schedule  */}
-      {step === 3 && effectivePlant && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setStep(1)}
-              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-container text-on-surface-variant transition-colors">
-              ←
-            </button>
-            <h3 className="font-semibold text-on-surface">Schedule Delivery</h3>
-          </div>
-
-          {/* Selected plant summary */}
-          <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-on-surface">{effectivePlant.plant.name}</p>
-              <RiskBadge level={effectivePlant.risk_level} />
-            </div>
-            <p className="text-xs text-on-surface-variant">{effectivePlant.plant.address}</p>
-            <p className="text-xs text-on-surface-variant mt-0.5">📍 {jobSite}</p>
-            <div className="flex gap-3 mt-1 text-xs text-on-surface-variant">
-              {effectivePlant.adjusted_eta_minutes != null && (
-                <span>⏱ ~{Math.round(effectivePlant.adjusted_eta_minutes)} min drive</span>
-              )}
-              {effectivePlant.remaining_life_minutes != null && (
-                <span>🧱 {Math.round(effectivePlant.remaining_life_minutes)} min buffer</span>
-              )}
-            </div>
-            {effectivePlant.remaining_life_minutes != null && effectivePlant.remaining_life_minutes <= 0 && (
-              <p className="text-xs font-semibold text-red-600 mt-1">
-                ⚠ Warning: concrete may expire before arrival — consider a closer plant
-              </p>
+            {loading ? (
+              <span className="flex items-center justify-center gap-2"><Spinner /> Dispatching…</span>
+            ) : effectivePlant ? (
+              `📋 Show Truck Schedule →`
+            ) : (
+              "Select brand & job site to continue"
             )}
-          </div>
-
-          {/* Departure time */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
-              DEPARTURE DATE & TIME (NZST) <span className="text-md-red">*</span>
-            </label>
-            <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">VOLUME (m³)</label>
-              <input type="number" value={volumeM3} onChange={(e) => setVolumeM3(e.target.value)}
-                placeholder="6.0" min="0.5" max="20" step="0.5"
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">POUR DURATION (min)</label>
-              <input type="number" value={pourMin} onChange={(e) => setPourMin(e.target.value)}
-                placeholder="optional" min="1" max="240"
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">VEHICLE ID (optional)</label>
-            <input type="text" value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}
-              placeholder="e.g. TRK-001"
-              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />
-          </div>
-
-          <button onClick={handleDispatch} disabled={loading || !scheduledAt}
-            className="w-full py-3 rounded-xl bg-primary text-on-primary font-semibold text-sm shadow-sm hover:shadow-md transition-all disabled:opacity-40 active:scale-[0.98] flex items-center justify-center gap-2">
-            {loading ? <><Spinner /> Scheduling…</> : "✅ Confirm Dispatch"}
           </button>
         </div>
       )}
+
+      {/* Step 3 removed - dispatch now goes directly to trucks schedule after plant selection */}}
     </div>
   );
 }
