@@ -208,7 +208,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
     setLoading(true);
     try {
       const resp = await dispatchTrip({
-        plant_id: effectivePlant.plant.id,
+        plant_id: String(effectivePlant.plant.id),
         job_site_address: jobSite,
         concrete_mix: mix,
         scheduled_at: new Date(scheduledAt + ":00+12:00").toISOString(),
