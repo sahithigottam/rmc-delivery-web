@@ -41,6 +41,19 @@ export default function Home() {
 
   // Effective truck position: GPS when active, simulation otherwise
   const activeTruckPosition = gpsMode && gps.gpsPosition ? gps.gpsPosition : sim.truckPosition;
+  const activeSimState: SimState = gpsMode
+    ? gps.gpsState === "active"
+      ? "running"
+      : gps.gpsState === "requesting"
+      ? "paused"
+      : "idle"
+    : sim.simState;
+  const activeProgress = gpsMode && route
+    ? Math.max(0, Math.min(1, 1 - gps.remainingKm / Math.max(route.distance_meters / 1000, 0.001)))
+    : sim.progress;
+  const activeRemainingKm = gpsMode ? gps.remainingKm : sim.remainingKm;
+  const activeTrafficMsg = gpsMode ? gps.trafficMsg : sim.trafficMsg;
+  const activeSpeed = gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed;
 
   /* SSE connection for real-time trip updates */
   const { connected } = useTripStream({
@@ -101,10 +114,10 @@ export default function Home() {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
 
         {/* Left nav */}
-        <nav className="w-52 flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col py-2 z-20">
+        <nav className="w-full md:w-52 flex-shrink-0 bg-surface border-b md:border-b-0 md:border-r border-outline-variant flex md:flex-col overflow-x-auto py-1 md:py-2 z-20">
           <NavItem id="dispatch" active={activeTab} label="Dispatch" onClick={setActiveTab}
             icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>}
           />
@@ -122,7 +135,7 @@ export default function Home() {
 
         {/* Full-width panels: Trips & Plants (no map) */}
         {(activeTab === "trips" || activeTab === "plants") && (
-          <div className="flex-1 overflow-y-auto sidebar-scroll bg-surface">
+          <div className="flex-1 overflow-y-auto sidebar-scroll bg-surface min-h-0">
             {activeTab === "trips" && (
               <TripsListPanel
                 onViewTrip={async (t) => {
@@ -142,9 +155,9 @@ export default function Home() {
 
         {/* Dispatch / Live Trip — content sidebar + map */}
         {showMap && (
-          <>
+          <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
             {/* Content sidebar */}
-            <aside className="w-[380px] flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col overflow-hidden">
+            <aside className="w-full lg:w-[380px] lg:max-w-[380px] flex-shrink-0 bg-surface border-b lg:border-b-0 lg:border-r border-outline-variant flex flex-col overflow-hidden lg:order-1 order-2 max-h-[40vh] sm:max-h-[50vh] md:max-h-[60vh] lg:max-h-none">
               <div className="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-4">
 
                 {activeTab === "dispatch" && (
@@ -202,15 +215,16 @@ export default function Home() {
             </aside>
 
             {/* Map + info */}
-            <main className="flex-1 flex flex-col overflow-hidden">
-              <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
+            <main className="flex-1 flex flex-col overflow-hidden order-1 lg:order-2 min-h-0">
+              <div className="relative min-h-[50vh] sm:min-h-[45vh] md:min-h-[35vh] lg:min-h-0" style={{ flex: "0 0 60vh; @media (min-width: 1024px) { flex: 0 0 58%; }" }}>
                 <MapView
                   route={route}
-                  simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
-                  simProgress={sim.progress}
+                  simState={activeSimState}
+                  simProgress={activeProgress}
                   truckPosition={activeTruckPosition}
                   animationPoints={gpsMode ? [] : sim.animationPoints}
                   currentPointIndex={gpsMode ? 0 : sim.currentPointIndex}
+                  followTruck={gpsMode}
                 />
                 {!route && (
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[400]">
@@ -226,19 +240,19 @@ export default function Home() {
                   </div>
                 )}
                 <MapOverlay
-                  simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
-                  progress={sim.progress}
-                  remainingKm={gpsMode ? gps.remainingKm : sim.remainingKm}
+                  simState={activeSimState}
+                  progress={activeProgress}
+                  remainingKm={activeRemainingKm}
                   destination={route?.resolved_end_address ?? ""}
-                  trafficMsg={gpsMode ? gps.trafficMsg : sim.trafficMsg}
-                  currentSpeed={gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed}
+                  trafficMsg={activeTrafficMsg}
+                  currentSpeed={activeSpeed}
                 />
               </div>
 
-              <div className="border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll"
-                style={{ flex: "0 0 35%", minHeight: 0 }}>
+              <div className="border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll min-h-0"
+                style={{ flex: "0 0 42%" }}>
                 {route ? (
-                  <InfoPanel route={route} simState={sim.simState} simProgress={sim.progress} />
+                  <InfoPanel route={route} simState={activeSimState} simProgress={activeProgress} />
                 ) : trip ? (
                   <TripInfoPanel trip={trip} />
                 ) : (
@@ -251,7 +265,7 @@ export default function Home() {
                 )}
               </div>
             </main>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -269,16 +283,16 @@ function NavItem({
   return (
     <button
       onClick={() => onClick(id)}
-      className={`flex items-center gap-3 px-4 py-3 text-sm font-medium w-full text-left transition-colors relative ${
+      className={`flex items-center justify-center md:justify-start gap-2 md:gap-3 px-3 md:px-4 py-3 text-sm font-medium min-w-[96px] md:min-w-0 w-auto md:w-full text-center md:text-left transition-colors relative ${
         isActive
-          ? "bg-primary/10 text-primary border-r-2 border-primary"
+          ? "bg-primary/10 text-primary border-b-2 md:border-b-0 md:border-r-2 border-primary"
           : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
       }`}
     >
       {icon}
-      <span>{label}</span>
+      <span className="whitespace-nowrap">{label}</span>
       {badge && (
-        <span className={`ml-auto w-2 h-2 rounded-full bg-md-green ${badgePulse ? "animate-pulse" : ""}`} />
+        <span className={`absolute right-2 top-2 md:static md:ml-auto w-2 h-2 rounded-full bg-md-green ${badgePulse ? "animate-pulse" : ""}`} />
       )}
     </button>
   );
