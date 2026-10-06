@@ -5,7 +5,7 @@ import type { TripRerouteInfo } from "@/types/route";
 import { getTrip, checkTripTraffic } from "@/lib/api";
 import { showToast } from "@/components/Toast";
 
-const POLL_INTERVAL_MS = 4 * 60 * 1000; // 4 minutes
+const POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 interface UseTripStreamProps {
   tripId: number | null;
