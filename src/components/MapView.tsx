@@ -50,12 +50,16 @@ export default function MapView({
       center: [-36.85, 174.76], // Auckland default
       zoom: 11,
       zoomControl: true,
-      attributionControl: false,
+      attributionControl: true,
     });
 
     L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-      { maxZoom: 19 }
+      "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {
+        maxZoom: 19,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }
     ).addTo(map);
 
     mapRef.current = map;
