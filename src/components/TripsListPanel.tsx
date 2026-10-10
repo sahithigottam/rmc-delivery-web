@@ -194,8 +194,68 @@ export default function TripsListPanel({
     return true;
   });
 
+  const renderActions = (trip: TripResponse) => {
+    const canCancel = trip.status === "pending" || trip.status === "in_progress" || trip.status === "paused";
+    const canDelete = trip.status === "cancelled" || trip.status === "completed";
+    const isConfirming = confirmCancel === trip.id;
+    const isCancelling = cancellingId === trip.id;
+    const isConfirmingDelete = confirmDelete === trip.id;
+    const isDeleting = deletingId === trip.id;
+    const btn = "min-h-12 px-4 text-sm md:min-h-0 md:px-2.5 md:py-1 md:text-xs rounded-lg font-medium whitespace-nowrap transition-colors disabled:opacity-40";
+    const yesNo = "min-h-12 px-4 text-sm md:min-h-0 md:px-2 md:py-1 md:text-xs rounded-lg whitespace-nowrap";
+
+    return (
+      <div className="flex flex-wrap items-center gap-2 md:justify-end md:gap-1.5">
+        {onViewTrip && (
+          <button onClick={() => onViewTrip(trip)}
+            className={`${btn} text-primary border border-primary/30 hover:bg-primary/5`}>
+            View
+          </button>
+        )}
+        {canCancel && !isConfirming && (
+          <button onClick={() => setConfirmCancel(trip.id)} disabled={isCancelling}
+            className={`${btn} text-md-red border border-md-red/30 hover:bg-md-red/5`}>
+            Cancel
+          </button>
+        )}
+        {isConfirming && (
+          <div className="flex items-center gap-2 md:gap-1">
+            <span className="text-sm md:text-xs text-on-surface-variant">Sure?</span>
+            <button onClick={() => handleCancel(trip.id)} disabled={isCancelling}
+              className={`${yesNo} font-medium bg-md-red text-white hover:opacity-80 disabled:opacity-40`}>
+              {isCancelling ? "…" : "Yes"}
+            </button>
+            <button onClick={() => setConfirmCancel(null)}
+              className={`${yesNo} text-on-surface-variant border border-outline-variant hover:bg-surface-container`}>
+              No
+            </button>
+          </div>
+        )}
+        {canDelete && !isConfirmingDelete && (
+          <button onClick={() => setConfirmDelete(trip.id)} disabled={isDeleting}
+            className={`${btn} text-on-surface-variant border border-outline-variant hover:bg-surface-container`}>
+            Delete
+          </button>
+        )}
+        {isConfirmingDelete && (
+          <div className="flex items-center gap-2 md:gap-1">
+            <span className="text-sm md:text-xs text-on-surface-variant">Delete?</span>
+            <button onClick={() => handleDelete(trip.id)} disabled={isDeleting}
+              className={`${yesNo} font-medium bg-md-red text-white hover:opacity-80 disabled:opacity-40`}>
+              {isDeleting ? "…" : "Yes"}
+            </button>
+            <button onClick={() => setConfirmDelete(null)}
+              className={`${yesNo} text-on-surface-variant border border-outline-variant hover:bg-surface-container`}>
+              No
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="max-w-6xl mx-auto px-5 py-6 space-y-4">
+    <div className="max-w-6xl mx-auto px-3 sm:px-5 py-6 space-y-4">
 
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -207,7 +267,7 @@ export default function TripsListPanel({
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => exportCSV()} disabled={visible.length === 0}
-            className="flex items-center gap-1.5 text-xs text-on-surface-variant font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
+            className="flex items-center gap-1.5 min-h-12 px-2 md:min-h-0 md:px-0 text-xs text-on-surface-variant font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
               <polyline points="7 10 12 15 17 10" />
@@ -216,7 +276,7 @@ export default function TripsListPanel({
             Export CSV
           </button>
           <button onClick={refresh} disabled={loading}
-            className="flex items-center gap-1.5 text-xs text-primary font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
+            className="flex items-center gap-1.5 min-h-12 px-2 md:min-h-0 md:px-0 text-xs text-primary font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
             <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" />
             </svg>
@@ -289,7 +349,31 @@ export default function TripsListPanel({
           No trips match your filters
         </div>
       ) : (
-        <div className="rounded-xl border border-outline-variant overflow-hidden">
+        <>
+        <div className="md:hidden space-y-3">
+          {visible.map((trip) => (
+            <div key={trip.id} className="rounded-xl border border-outline-variant p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="font-semibold text-on-surface">#{trip.id}</span>
+                  {trip.concrete_mix && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-primary/10 text-primary text-[10px] font-bold">{trip.concrete_mix}</span>
+                  )}
+                </div>
+                <TripStatusBadge status={trip.status} size="sm" />
+              </div>
+              <p className="text-sm text-on-surface-variant [overflow-wrap:anywhere]">
+                {trip.start_address.split(",")[0]} → {trip.end_address.split(",")[0]}
+              </p>
+              <p className="text-xs text-on-surface-variant">
+                {trip.scheduled_at ? formatNZT(trip.scheduled_at) : "Not scheduled"}
+                {trip.original_distance_meters != null && ` · ${(trip.original_distance_meters / 1000).toFixed(1)} km`}
+              </p>
+              {renderActions(trip)}
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block rounded-xl border border-outline-variant overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-surface-container text-on-surface-variant uppercase text-[11px] tracking-wide">
               <tr>
@@ -303,13 +387,6 @@ export default function TripsListPanel({
             </thead>
             <tbody className="divide-y divide-outline-variant/50">
               {visible.map((trip) => {
-                const canCancel = trip.status === "pending" || trip.status === "in_progress" || trip.status === "paused";
-                const canDelete = trip.status === "cancelled" || trip.status === "completed";
-                const isConfirming = confirmCancel === trip.id;
-                const isCancelling = cancellingId === trip.id;
-                const isConfirmingDelete = confirmDelete === trip.id;
-                const isDeleting = deletingId === trip.id;
-
                 return (
                   <tr key={trip.id} className="hover:bg-surface-container/50 transition-colors">
                     <td className="px-4 py-3">
@@ -339,52 +416,7 @@ export default function TripsListPanel({
                       {trip.scheduled_at ? formatNZT(trip.scheduled_at) : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {onViewTrip && (
-                          <button onClick={() => onViewTrip(trip)}
-                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">
-                            View
-                          </button>
-                        )}
-                        {canCancel && !isConfirming && (
-                          <button onClick={() => setConfirmCancel(trip.id)} disabled={isCancelling}
-                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-md-red border border-md-red/30 hover:bg-md-red/5 transition-colors disabled:opacity-40">
-                            Cancel
-                          </button>
-                        )}
-                        {isConfirming && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-on-surface-variant">Sure?</span>
-                            <button onClick={() => handleCancel(trip.id)} disabled={isCancelling}
-                              className="px-2 py-1 rounded-lg text-xs font-medium bg-md-red text-white hover:opacity-80 disabled:opacity-40">
-                              {isCancelling ? "…" : "Yes"}
-                            </button>
-                            <button onClick={() => setConfirmCancel(null)}
-                              className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">
-                              No
-                            </button>
-                          </div>
-                        )}
-                        {canDelete && !isConfirmingDelete && (
-                          <button onClick={() => setConfirmDelete(trip.id)} disabled={isDeleting}
-                            className="px-2.5 py-1 rounded-lg text-xs font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors disabled:opacity-40">
-                            Delete
-                          </button>
-                        )}
-                        {isConfirmingDelete && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-on-surface-variant">Delete?</span>
-                            <button onClick={() => handleDelete(trip.id)} disabled={isDeleting}
-                              className="px-2 py-1 rounded-lg text-xs font-medium bg-md-red text-white hover:opacity-80 disabled:opacity-40">
-                              {isDeleting ? "…" : "Yes"}
-                            </button>
-                            <button onClick={() => setConfirmDelete(null)}
-                              className="px-2 py-1 rounded-lg text-xs text-on-surface-variant border border-outline-variant hover:bg-surface-container">
-                              No
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                      {renderActions(trip)}
                     </td>
                   </tr>
                 );
@@ -392,6 +424,7 @@ export default function TripsListPanel({
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

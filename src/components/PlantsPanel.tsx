@@ -84,12 +84,12 @@ function PlantModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-surface rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+      <div role="dialog" aria-modal="true" aria-label={initial.id ? "Edit plant" : "Add plant"} className="bg-surface rounded-2xl shadow-xl w-full max-w-md mx-3 sm:mx-4 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-outline-variant">
           <h2 className="font-semibold text-on-surface">{initial.id ? "Edit Plant" : "Add Plant"}</h2>
-          <button onClick={onClose} className="text-on-surface-variant hover:text-on-surface text-xl leading-none">&times;</button>
+          <button onClick={onClose} aria-label="Close" className="px-3 -mr-3 text-on-surface-variant hover:text-on-surface text-xl leading-none">&times;</button>
         </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto max-h-[80vh]">
+        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto max-h-[80dvh]">
           <div>
             <label className="text-xs font-semibold text-on-surface-variant tracking-wide">PLANT NAME *</label>
             <input value={form.name} onChange={(e) => set("name", e.target.value)}
@@ -182,12 +182,12 @@ function JobSiteModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-surface rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+      <div role="dialog" aria-modal="true" aria-label={initial ? "Edit job site" : "Add job site"} className="bg-surface rounded-2xl shadow-xl w-full max-w-md mx-3 sm:mx-4 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-outline-variant">
           <h2 className="font-semibold text-on-surface">{initial ? "Edit Job Site" : "Add Job Site"}</h2>
-          <button onClick={onClose} className="text-on-surface-variant hover:text-on-surface text-xl leading-none">&times;</button>
+          <button onClick={onClose} aria-label="Close" className="px-3 -mr-3 text-on-surface-variant hover:text-on-surface text-xl leading-none">&times;</button>
         </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-3">
+        <form onSubmit={handleSubmit} className="p-5 space-y-3 overflow-y-auto max-h-[80dvh]">
           <div>
             <label className="text-xs font-medium text-on-surface-variant">Label *</label>
             <input value={name} onChange={(e) => setName(e.target.value)}
@@ -319,8 +319,15 @@ export default function PlantsPanel() {
     return true;
   });
 
+  const renderToggle = (plant: PlantOut) => (
+    <button role="switch" aria-checked={plant.active} aria-label={`${plant.name} active`} onClick={() => handleToggle(plant)}
+      className={`relative w-9 h-5 rounded-full transition-colors before:absolute before:-inset-3.5 before:content-[''] ${plant.active ? "bg-primary" : "bg-outline-variant"}`}>
+      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${plant.active ? "translate-x-4" : "translate-x-0.5"}`} />
+    </button>
+  );
+
   return (
-    <div className="max-w-6xl mx-auto px-5 py-6 space-y-8">
+    <div className="max-w-6xl mx-auto px-3 sm:px-5 py-6 space-y-8">
 
       {/* ── Plants section ── */}
       <section>
@@ -330,7 +337,7 @@ export default function PlantsPanel() {
             <p className="text-sm text-on-surface-variant">{plants.length} plants · {plants.filter((p) => p.active).length} active</p>
           </div>
           <button onClick={() => setPlantModal({ ...BLANK })}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-on-primary text-sm font-medium rounded-xl hover:opacity-90 transition-opacity">
+            className="flex items-center gap-1.5 min-h-12 md:min-h-0 px-4 py-2 bg-primary text-on-primary text-sm font-medium rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -345,13 +352,13 @@ export default function PlantsPanel() {
             <option value="all">All brands</option>
             {brands.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
-          <label className="flex items-center gap-1.5 text-sm text-on-surface-variant cursor-pointer ml-1">
+          <label className="flex items-center gap-1.5 min-h-12 md:min-h-0 text-sm text-on-surface-variant cursor-pointer ml-1">
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)}
               className="accent-primary w-3.5 h-3.5" />
             Show inactive
           </label>
           <button onClick={refresh} disabled={loading}
-            className="ml-auto flex items-center gap-1 text-xs text-primary font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
+            className="ml-auto flex items-center gap-1 min-h-12 md:min-h-0 px-2 md:px-0 text-xs text-primary font-medium hover:opacity-70 disabled:opacity-40 transition-opacity">
             <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M1 4v6h6M23 20v-6h-6" /><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15" />
             </svg>
@@ -371,7 +378,26 @@ export default function PlantsPanel() {
             No plants match your filters
           </div>
         ) : (
-          <div className="rounded-xl border border-outline-variant overflow-hidden">
+          <>
+          <div className="md:hidden space-y-3">
+            {visible.map((plant) => (
+              <div key={plant.id} className={`rounded-xl border border-outline-variant p-3 space-y-2 ${!plant.active ? "opacity-60" : ""}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-on-surface [overflow-wrap:anywhere]">{plant.name}</span>
+                  {renderToggle(plant)}
+                </div>
+                <span className="inline-block px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{plant.brand}</span>
+                <p className="text-sm text-on-surface-variant [overflow-wrap:anywhere]">{plant.address}</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlantModal({ ...plant })}
+                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">Edit</button>
+                  <button onClick={() => setConfirmDelete({ type: "plant", id: plant.id })}
+                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block rounded-xl border border-outline-variant overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-surface-container text-on-surface-variant uppercase text-[11px] tracking-wide">
                 <tr>
@@ -391,10 +417,7 @@ export default function PlantsPanel() {
                     </td>
                     <td className="px-4 py-3 text-on-surface-variant hidden md:table-cell max-w-xs truncate">{plant.address}</td>
                     <td className="px-4 py-3 text-center">
-                      <button onClick={() => handleToggle(plant)}
-                        className={`w-9 h-5 rounded-full transition-colors relative ${plant.active ? "bg-primary" : "bg-outline-variant"}`}>
-                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${plant.active ? "translate-x-4" : "translate-x-0.5"}`} />
-                      </button>
+                      {renderToggle(plant)}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
@@ -413,6 +436,7 @@ export default function PlantsPanel() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
 
@@ -424,7 +448,7 @@ export default function PlantsPanel() {
             <p className="text-sm text-on-surface-variant">Saved delivery destinations · stored in this browser</p>
           </div>
           <button onClick={() => setJobSiteModal("new")}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-on-primary text-sm font-medium rounded-xl hover:opacity-90 transition-opacity">
+            className="flex items-center gap-1.5 min-h-12 md:min-h-0 px-4 py-2 bg-primary text-on-primary text-sm font-medium rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -437,7 +461,23 @@ export default function PlantsPanel() {
             No job sites saved yet. Add one to quickly reuse delivery addresses.
           </div>
         ) : (
-          <div className="rounded-xl border border-outline-variant overflow-hidden">
+          <>
+          <div className="md:hidden space-y-3">
+            {jobSites.map((site) => (
+              <div key={site.id} className="rounded-xl border border-outline-variant p-3 space-y-2">
+                <p className="font-medium text-on-surface [overflow-wrap:anywhere]">{site.name}</p>
+                <p className="text-sm text-on-surface-variant [overflow-wrap:anywhere]">{site.address}</p>
+                {site.notes && <p className="text-xs text-on-surface-variant [overflow-wrap:anywhere]">{site.notes}</p>}
+                <div className="flex gap-2">
+                  <button onClick={() => setJobSiteModal(site)}
+                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">Edit</button>
+                  <button onClick={() => setConfirmDelete({ type: "site", id: site.id })}
+                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block rounded-xl border border-outline-variant overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-surface-container text-on-surface-variant uppercase text-[11px] tracking-wide">
                 <tr>
@@ -466,6 +506,7 @@ export default function PlantsPanel() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
 
@@ -487,7 +528,7 @@ export default function PlantsPanel() {
       )}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-surface rounded-2xl shadow-xl w-full max-w-sm mx-4 p-5 space-y-4">
+          <div role="dialog" aria-modal="true" aria-label="Confirm delete" className="bg-surface rounded-2xl shadow-xl w-full max-w-sm mx-3 sm:mx-4 p-5 space-y-4">
             <p className="text-sm text-on-surface">
               Delete this {confirmDelete.type === "plant" ? "plant" : "job site"}? This cannot be undone.
             </p>

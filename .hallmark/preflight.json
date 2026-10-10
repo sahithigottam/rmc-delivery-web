@@ -1,0 +1,17 @@
+{
+  "scanned": "2026-10-10",
+  "scope": "responsive mobile + iPad, whole app",
+  "framework": "Next.js ^14.2.0 app router (package.json L12, src/app/layout.tsx)",
+  "styling": "Tailwind ^3.4.0 (package.json L24), config tailwind.config.ts",
+  "fonts": "Google Sans + Roboto fallback (src/app/globals.css L1, tailwind.config.ts L27)",
+  "palette": "Material-3 hex tokens in tailwind.config.ts (primary #6750a4 L9, surface #fef7ff L14)",
+  "motion": "motion-cut: no motion library in package.json; CSS animate-slide-in (globals.css L73) + Tailwind animate-pulse",
+  "spacing": "Tailwind default scale, no extend.spacing",
+  "map": "leaflet ^1.9.4 (package.json L15)",
+  "design_md": false,
+  "conflicts": [
+    "src/app/globals.css L11: html/body overflow hidden (gate 34 asks for clip). Intentional app shell with inner scrollers; keep and record as exception.",
+    "Inline hex colours in MapView.tsx / MapOverlay.tsx bypass tailwind tokens (pre-existing, out of scope)."
+  ],
+  "preserve": ["font stack", "palette", "spacing scale", "Next/Tailwind/Leaflet stack"]
+}

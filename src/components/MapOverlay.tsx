@@ -26,7 +26,7 @@ export default function MapOverlay({
 
   return (
     <div
-      className="absolute bottom-5 left-5 right-5 z-[1000]
+      className="hidden lg:block absolute bottom-5 left-5 right-5 z-[1000]
                  bg-white/95 backdrop-blur-md rounded-2xl
                  px-5 py-4 shadow-xl
                  font-sans"

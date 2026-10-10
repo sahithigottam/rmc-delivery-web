@@ -1,3 +1,4 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Map / Diagram + Catalogue · tone: utilitarian · design-system: design.md · designed-as-app */
 @import url("https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap");
 
 @tailwind base;
@@ -16,6 +17,39 @@ body {
 
 #__next {
   height: 100%;
+}
+
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* Short landscape phones: the 56px header is worth more as map */
+@media (max-height: 32rem) and (max-width: 63.99rem) {
+  .app-header {
+    display: none;
+  }
+}
+
+/* Touch devices: iOS zooms the page on focus when input font-size < 16px */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select {
+    min-height: 48px;
+  }
+  html .leaflet-touch .leaflet-bar a {
+    width: 48px;
+    height: 48px;
+    line-height: 48px;
+  }
+  [role="dialog"] button {
+    min-height: 48px;
+  }
 }
 
 /* Leaflet container must fill parent */

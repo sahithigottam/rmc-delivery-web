@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getTrip, getRoute } from "@/lib/api";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useGpsTracking } from "@/hooks/useGpsTracking";
@@ -21,6 +21,7 @@ import type { RouteResponse, TripResponse, DispatchResponse, SimState } from "@/
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
 type ActiveTab = "dispatch" | "trip" | "trips" | "plants";
+type SheetState = "collapsed" | "half" | "full";
 
 export default function Home() {
   const [route, setRoute] = useState<RouteResponse | null>(null);
@@ -28,6 +29,20 @@ export default function Home() {
   const [viewedTrip, setViewedTrip] = useState<TripResponse | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("dispatch");
   const [gpsMode, setGpsMode] = useState(false);
+  const [sheet, setSheet] = useState<SheetState>("half");
+  const dragStartY = useRef<number | null>(null);
+  const swiped = useRef(false);
+  // lg+ only: labelled sidebar vs icon rail. Saved choice wins, otherwise expanded from xl up.
+  const [navExpanded, setNavExpanded] = useState(true);
+  useEffect(() => {
+    const saved = localStorage.getItem("rmc_nav_expanded");
+    setNavExpanded(saved != null ? saved === "true" : window.matchMedia("(min-width: 80rem)").matches);
+  }, []);
+  const toggleNav = () => {
+    const next = !navExpanded;
+    setNavExpanded(next);
+    localStorage.setItem("rmc_nav_expanded", String(next));
+  };
 
   // Simulation mode — animates truck along polyline
   const sim = useSimulation(route, !gpsMode && trip?.status === "in_progress" ? trip.id : null);
@@ -73,10 +88,12 @@ export default function Home() {
       setViewedTrip(null);
       setRoute(fullRoute);
       setActiveTab("trip");
+      setSheet("half");
       showToast(`Trip #${resp.trip_id} dispatched to ${resp.plant_name}`, "success");
     } catch {
       showToast("Dispatch succeeded but couldn't load trip details", "info");
       setActiveTab("trip");
+      setSheet("half");
     }
   }, []);
 
@@ -85,15 +102,43 @@ export default function Home() {
   const liveTrip = trip?.status === "in_progress" || trip?.status === "paused";
   const showMap = activeTab === "dispatch" || activeTab === "trip";
 
+  const selectTab = (id: ActiveTab) => {
+    setActiveTab(id);
+    setSheet("half");
+  };
+
+  // Sheet header text: the driver-critical status must stay visible when the sheet is collapsed
+  const trafficMsg = gpsMode ? gps.trafficMsg : sim.trafficMsg;
+  const shownTrip = viewedTrip ?? trip;
+  let summary = "Dispatch a delivery";
+  if (activeTab === "trip") {
+    if (gpsMode) {
+      summary =
+        gps.gpsState === "active"
+          ? `${gps.remainingKm.toFixed(1)} km left${gps.gpsSpeed != null ? ` \u00b7 ${gps.gpsSpeed} km/h` : ""}`
+          : gps.gpsState === "error"
+          ? gps.gpsError ?? "GPS error"
+          : "GPS not started";
+    } else if (sim.simState === "running") {
+      summary = `${sim.remainingKm.toFixed(1)} km left \u00b7 ${sim.currentSpeed} km/h`;
+    } else if (sim.simState === "paused") {
+      summary = "Paused";
+    } else if (sim.simState === "finished") {
+      summary = "Delivered";
+    } else {
+      summary = shownTrip ? `Trip #${shownTrip.id}` : "No active trip";
+    }
+  }
+
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen h-dvh pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       <ToastContainer />
 
       {/* Top bar */}
-      <header className="flex items-center h-14 px-5 bg-primary text-on-primary shadow-md z-30 flex-shrink-0">
+      <header className="app-header flex items-center h-14 px-3 lg:px-5 bg-primary text-on-primary shadow-md z-30 flex-shrink-0">
         <span className="text-lg font-medium tracking-wide flex-1">RMC Delivery</span>
         {connected && liveTrip && (
-          <div className="flex items-center gap-2 text-sm opacity-90">
+          <div className="flex items-center gap-2 text-sm opacity-90 whitespace-nowrap">
             <div className="w-2 h-2 rounded-full bg-md-green animate-pulse" />
             Live Tracking
           </div>
@@ -101,25 +146,39 @@ export default function Home() {
       </header>
 
       {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col lg:flex-row min-h-0 overflow-hidden">
 
         {/* Left nav */}
-        <nav className="w-52 flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col py-2 z-20">
-          <NavItem id="dispatch" active={activeTab} label="Dispatch" onClick={setActiveTab}
+        <nav aria-label="Primary" className={`order-last lg:order-first flex flex-row flex-shrink-0 z-20 bg-surface border-t border-outline-variant pb-[env(safe-area-inset-bottom)] lg:flex-col lg:border-t-0 lg:border-r lg:py-2 lg:pb-2 ${navExpanded ? "lg:w-52" : "lg:w-16"}`}>
+          <NavItem id="dispatch" active={activeTab} label="Dispatch" onClick={selectTab} expanded={navExpanded}
             icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>}
           />
-          <NavItem id="trip" active={activeTab} label="Live Trip" onClick={setActiveTab}
+          <NavItem id="trip" active={activeTab} label="Live Trip" onClick={selectTab} expanded={navExpanded}
             badge={trip != null} badgePulse={liveTrip}
             icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>}
           />
-          <NavItem id="trips" active={activeTab} label="Trips" onClick={setActiveTab}
+          <NavItem id="trips" active={activeTab} label="Trips" onClick={selectTab} expanded={navExpanded}
             icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>}
           />
-          <NavItem id="plants" active={activeTab} label="Plants" onClick={setActiveTab}
+          <NavItem id="plants" active={activeTab} label="Plants" onClick={selectTab} expanded={navExpanded}
             icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-4h6v4"/></svg>}
           />
+          <button
+            type="button"
+            onClick={toggleNav}
+            aria-expanded={navExpanded}
+            aria-label={navExpanded ? "Collapse navigation" : "Expand navigation"}
+            title={navExpanded ? "Collapse navigation" : "Expand navigation"}
+            className={`hidden lg:flex mt-auto min-h-12 items-center gap-3 whitespace-nowrap text-sm text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors ${navExpanded ? "px-4" : "justify-center"}`}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={navExpanded ? "" : "rotate-180"}>
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+            {navExpanded && <span>Collapse</span>}
+          </button>
         </nav>
 
+        <div className="relative flex flex-1 min-h-0 min-w-0">
         {/* Full-width panels: Trips & Plants (no map) */}
         {(activeTab === "trips" || activeTab === "plants") && (
           <div className="flex-1 overflow-y-auto sidebar-scroll bg-surface">
@@ -130,6 +189,7 @@ export default function Home() {
                     const fullTrip = await getTrip(t.id);
                     setViewedTrip(fullTrip);
                     setActiveTab("trip");
+                    setSheet("half");
                   } catch {
                     showToast("Could not load trip details", "error");
                   }
@@ -144,8 +204,57 @@ export default function Home() {
         {showMap && (
           <>
             {/* Content sidebar */}
-            <aside className="w-[380px] flex-shrink-0 bg-surface border-r border-outline-variant flex flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto sidebar-scroll p-4 space-y-4">
+            <aside
+              onFocusCapture={(e) => {
+                if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement).tagName)) setSheet("full");
+              }}
+              className={`absolute inset-x-0 bottom-0 z-30 mx-auto flex w-full max-w-xl flex-col overflow-hidden rounded-t-3xl border-t border-outline-variant bg-surface shadow-2xl lg:static lg:mx-0 lg:h-auto lg:w-[340px] lg:max-w-none lg:flex-shrink-0 lg:rounded-none lg:border-r lg:border-t-0 lg:shadow-none xl:w-[380px] ${
+                sheet === "collapsed" ? "h-16" : sheet === "half" ? "h-[55%]" : "h-full"
+              }`}
+            >
+              {/* Sheet header: below lg only */}
+              <div className="lg:hidden flex h-16 flex-shrink-0 items-center px-2">
+                <button
+                  type="button"
+                  aria-expanded={sheet !== "collapsed"}
+                  onPointerDown={(e) => { dragStartY.current = e.clientY; swiped.current = false; }}
+                  onPointerCancel={() => { dragStartY.current = null; }}
+                  onPointerUp={(e) => {
+                    if (dragStartY.current == null) return;
+                    const dy = e.clientY - dragStartY.current;
+                    dragStartY.current = null;
+                    if (Math.abs(dy) < 40) return;
+                    swiped.current = true;
+                    setSheet((s) => dy < 0 ? (s === "collapsed" ? "half" : "full") : (s === "full" ? "half" : "collapsed"));
+                  }}
+                  onClick={() => {
+                    if (swiped.current) { swiped.current = false; return; }
+                    setSheet(sheet === "collapsed" ? "half" : "collapsed");
+                  }}
+                  className="flex h-full min-w-0 flex-1 touch-none flex-col items-center justify-center gap-1 text-left"
+                >
+                  <span aria-hidden className="h-1 w-10 rounded-full bg-outline-variant" />
+                  <span className="block w-full min-w-0 px-2">
+                    <span className="block truncate text-sm font-medium text-on-surface">{summary}</span>
+                    {trafficMsg && (
+                      <span className="block truncate text-xs text-on-surface-variant">{trafficMsg}</span>
+                    )}
+                  </span>
+                </button>
+                {sheet !== "collapsed" && (
+                  <button
+                    type="button"
+                    aria-label={sheet === "full" ? "Shrink panel" : "Expand panel"}
+                    onClick={() => setSheet(sheet === "full" ? "half" : "full")}
+                    className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-on-surface-variant hover:bg-surface-container"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={sheet === "full" ? "rotate-180" : ""}>
+                      <path d="M6 15l6-6 6 6" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <div className={`flex-1 overflow-y-auto sidebar-scroll p-3 lg:p-4 space-y-4 ${sheet === "collapsed" ? "hidden lg:block" : ""}`}>
 
                 {activeTab === "dispatch" && (
                   <DispatchPanel onDispatched={handleDispatched} />
@@ -170,12 +279,20 @@ export default function Home() {
                       }}
                     />
                     <TripEventLog tripId={(viewedTrip ?? trip)?.id ?? null} />
+                    {/* Below lg the route info lives in the sheet; lg+ shows it under the map */}
+                    <div className="lg:hidden -mx-3">
+                      {route ? (
+                        <InfoPanel route={route} simState={sim.simState} simProgress={sim.progress} />
+                      ) : trip ? (
+                        <TripInfoPanel trip={trip} />
+                      ) : null}
+                    </div>
                   </div>
                 )}
               </div>
 
               {activeTab === "trip" && (viewedTrip ?? trip) && (
-                <div className="border-t border-outline-variant p-4 bg-surface flex-shrink-0">
+                <div className={`border-t border-outline-variant p-3 lg:p-4 bg-surface flex-shrink-0 ${sheet === "collapsed" ? "hidden lg:block" : ""}`}>
                   <SimulationControls
                     simState={sim.simState}
                     progress={sim.progress}
@@ -202,8 +319,8 @@ export default function Home() {
             </aside>
 
             {/* Map + info */}
-            <main className="flex-1 flex flex-col overflow-hidden">
-              <div className="relative" style={{ flex: "0 0 65%", minHeight: 0 }}>
+            <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+              <div className="relative isolate flex-1 min-h-0 lg:flex-[0_0_65%]">
                 <MapView
                   route={route}
                   simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
@@ -211,10 +328,11 @@ export default function Home() {
                   truckPosition={activeTruckPosition}
                   animationPoints={gpsMode ? [] : sim.animationPoints}
                   currentPointIndex={gpsMode ? 0 : sim.currentPointIndex}
+                  bottomInsetRatio={sheet === "half" ? 0.55 : sheet === "full" ? 0.9 : 0.1}
                 />
                 {!route && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[400]">
-                    <div className="text-center space-y-3 p-8 max-w-sm">
+                  <div className="absolute inset-0 flex items-start pt-10 lg:items-center lg:pt-0 justify-center pointer-events-none z-[400]">
+                    <div className="text-center space-y-3 p-4 lg:p-8 max-w-sm">
                       <div className="flex justify-center">
                         <TruckIcon size={80} />
                       </div>
@@ -235,8 +353,7 @@ export default function Home() {
                 />
               </div>
 
-              <div className="border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll"
-                style={{ flex: "0 0 35%", minHeight: 0 }}>
+              <div className="hidden lg:block lg:flex-[0_0_35%] min-h-0 border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll">
                 {route ? (
                   <InfoPanel route={route} simState={sim.simState} simProgress={sim.progress} />
                 ) : trip ? (
@@ -253,6 +370,7 @@ export default function Home() {
             </main>
           </>
         )}
+        </div>
       </div>
     </div>
   );
@@ -260,25 +378,31 @@ export default function Home() {
 
 /* Nav item */
 function NavItem({
-  id, active, label, icon, onClick, badge, badgePulse,
+  id, active, label, icon, onClick, badge, badgePulse, expanded,
 }: {
   id: ActiveTab; active: ActiveTab; label: string; icon: React.ReactNode;
-  onClick: (id: ActiveTab) => void; badge?: boolean; badgePulse?: boolean;
+  onClick: (id: ActiveTab) => void; badge?: boolean; badgePulse?: boolean; expanded: boolean;
 }) {
   const isActive = id === active;
   return (
     <button
       onClick={() => onClick(id)}
-      className={`flex items-center gap-3 px-4 py-3 text-sm font-medium w-full text-left transition-colors relative ${
+      aria-current={isActive ? "page" : undefined}
+      title={label}
+      className={`relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 px-2 text-xs font-medium whitespace-nowrap transition-colors lg:flex-none [&_svg]:h-[22px] [&_svg]:w-[22px] lg:[&_svg]:h-[18px] lg:[&_svg]:w-[18px] ${
+        expanded
+          ? "lg:min-h-0 lg:w-full lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:py-3 lg:text-left lg:text-sm"
+          : "lg:min-h-12 lg:py-3"
+      } ${
         isActive
-          ? "bg-primary/10 text-primary border-r-2 border-primary"
+          ? `bg-primary/10 text-primary ${expanded ? "lg:border-r-2 lg:border-primary" : ""}`
           : "text-on-surface-variant hover:bg-surface-container hover:text-on-surface"
       }`}
     >
       {icon}
-      <span>{label}</span>
+      <span className={expanded ? "" : "lg:sr-only"}>{label}</span>
       {badge && (
-        <span className={`ml-auto w-2 h-2 rounded-full bg-md-green ${badgePulse ? "animate-pulse" : ""}`} />
+        <span className={`absolute right-[calc(50%-1.5rem)] top-2.5 w-2 h-2 rounded-full bg-md-green ${expanded ? "lg:static lg:ml-auto" : "lg:right-3 lg:top-2.5"} ${badgePulse ? "animate-pulse" : ""}`} />
       )}
     </button>
   );

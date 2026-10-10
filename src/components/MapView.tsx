@@ -25,6 +25,8 @@ interface MapViewProps {
   truckPosition: [number, number] | null;
   animationPoints: [number, number][];
   currentPointIndex: number;
+  /** Fraction of map height covered by the bottom sheet on small screens (0–1). */
+  bottomInsetRatio?: number;
 }
 
 export default function MapView({
@@ -33,8 +35,11 @@ export default function MapView({
   truckPosition,
   animationPoints,
   currentPointIndex,
+  bottomInsetRatio = 0,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const insetRef = useRef(bottomInsetRatio);
+  insetRef.current = bottomInsetRatio;
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Layer[]>([]);
   const routeLayerRef = useRef<L.Polyline | null>(null);
@@ -64,7 +69,12 @@ export default function MapView({
 
     mapRef.current = map;
 
+    // Panels docking/undocking and device rotation resize the container without a window resize
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(containerRef.current);
+
     return () => {
+      ro.disconnect();
       map.remove();
       mapRef.current = null;
     };
@@ -139,7 +149,15 @@ export default function MapView({
     ).addTo(map);
     routeLayerRef.current = routeLine;
 
-    map.fitBounds(routeLine.getBounds(), { padding: [60, 80] });
+    map.fitBounds(
+      routeLine.getBounds(),
+      !window.matchMedia("(min-width: 64rem)").matches
+        ? {
+            paddingTopLeft: [32, 48],
+            paddingBottomRight: [32, 48 + map.getSize().y * insetRef.current],
+          }
+        : { padding: [60, 80] }
+    );
   }, [route, clearLayers]);
 
   /* ── Simulation: add truck + traversed/remaining when sim starts ── */

@@ -57,7 +57,7 @@ export default function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-16 right-4 z-50 flex flex-col gap-2 max-w-sm">
+    <div className="fixed top-16 left-4 right-4 sm:left-auto z-50 flex flex-col gap-2 sm:max-w-sm">
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -70,7 +70,8 @@ export default function ToastContainer() {
             onClick={() =>
               setToasts((prev) => prev.filter((x) => x.id !== t.id))
             }
-            className="text-xs opacity-60 hover:opacity-100 flex-shrink-0 mt-0.5"
+            aria-label="Dismiss"
+            className="text-xs opacity-60 hover:opacity-100 flex-shrink-0 -m-2 p-2"
           >
             ✕
           </button>
