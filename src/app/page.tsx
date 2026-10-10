@@ -208,15 +208,15 @@ export default function Home() {
               onFocusCapture={(e) => {
                 if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target as HTMLElement).tagName)) setSheet("full");
               }}
-              className={`absolute inset-x-0 bottom-0 z-30 mx-auto flex w-full max-w-xl flex-col overflow-hidden rounded-t-3xl border-t border-outline-variant bg-surface shadow-2xl lg:static lg:mx-0 lg:h-auto lg:w-[340px] lg:max-w-none lg:flex-shrink-0 lg:rounded-none lg:border-r lg:border-t-0 lg:shadow-none xl:w-[380px] ${
-                sheet === "collapsed" ? "h-16" : sheet === "half" ? "h-[55%]" : "h-full"
+              className={`absolute inset-x-0 bottom-0 z-30 mx-auto w-full max-w-xl flex-col overflow-hidden rounded-t-3xl border-t border-outline-variant bg-surface shadow-2xl lg:static lg:mx-0 lg:h-auto lg:w-[340px] lg:max-w-none lg:flex-shrink-0 lg:rounded-none lg:border-r lg:border-t-0 lg:shadow-none xl:w-[380px] ${
+                sheet === "collapsed" ? "hidden" : sheet === "half" ? "flex h-[55%]" : "flex h-full"
               }`}
             >
               {/* Sheet header: below lg only */}
               <div className="lg:hidden flex h-16 flex-shrink-0 items-center px-2">
                 <button
                   type="button"
-                  aria-expanded={sheet !== "collapsed"}
+                  aria-expanded={sheet === "full"}
                   onPointerDown={(e) => { dragStartY.current = e.clientY; swiped.current = false; }}
                   onPointerCancel={() => { dragStartY.current = null; }}
                   onPointerUp={(e) => {
@@ -229,7 +229,7 @@ export default function Home() {
                   }}
                   onClick={() => {
                     if (swiped.current) { swiped.current = false; return; }
-                    setSheet(sheet === "collapsed" ? "half" : "collapsed");
+                    setSheet(sheet === "full" ? "half" : "full");
                   }}
                   className="flex h-full min-w-0 flex-1 touch-none flex-col items-center justify-center gap-1 text-left"
                 >
@@ -241,20 +241,44 @@ export default function Home() {
                     )}
                   </span>
                 </button>
-                {sheet !== "collapsed" && (
-                  <button
-                    type="button"
-                    aria-label={sheet === "full" ? "Shrink panel" : "Expand panel"}
-                    onClick={() => setSheet(sheet === "full" ? "half" : "full")}
-                    className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-on-surface-variant hover:bg-surface-container"
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={sheet === "full" ? "rotate-180" : ""}>
-                      <path d="M6 15l6-6 6 6" />
-                    </svg>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  aria-label={sheet === "full" ? "Shrink panel" : "Expand panel"}
+                  onClick={() => setSheet(sheet === "full" ? "half" : "full")}
+                  className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-on-surface-variant hover:bg-surface-container"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={sheet === "full" ? "rotate-180" : ""}>
+                    <path d="M6 15l6-6 6 6" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Minimise details and show the map"
+                  title="Minimise"
+                  onClick={() => setSheet("collapsed")}
+                  className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-on-surface-variant hover:bg-surface-container"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+                  </svg>
+                </button>
               </div>
-              <div className={`flex-1 overflow-y-auto sidebar-scroll p-3 lg:p-4 space-y-4 ${sheet === "collapsed" ? "hidden lg:block" : ""}`}>
+              {/* Panel header: lg and up */}
+              <div className="hidden lg:flex flex-shrink-0 items-center justify-between border-b border-outline-variant px-4 py-1">
+                <span className="text-sm font-medium text-on-surface">{activeTab === "dispatch" ? "Dispatch" : "Live Trip"}</span>
+                <button
+                  type="button"
+                  aria-label="Minimise details and show the map"
+                  title="Minimise"
+                  onClick={() => setSheet("collapsed")}
+                  className="flex h-12 w-12 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+                  </svg>
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto sidebar-scroll p-3 lg:p-4 space-y-4">
 
                 {activeTab === "dispatch" && (
                   <DispatchPanel onDispatched={handleDispatched} />
@@ -292,7 +316,7 @@ export default function Home() {
               </div>
 
               {activeTab === "trip" && (viewedTrip ?? trip) && (
-                <div className={`border-t border-outline-variant p-3 lg:p-4 bg-surface flex-shrink-0 ${sheet === "collapsed" ? "hidden lg:block" : ""}`}>
+                <div className="border-t border-outline-variant p-3 lg:p-4 bg-surface flex-shrink-0">
                   <SimulationControls
                     simState={sim.simState}
                     progress={sim.progress}
@@ -351,6 +375,27 @@ export default function Home() {
                   trafficMsg={gpsMode ? gps.trafficMsg : sim.trafficMsg}
                   currentSpeed={gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed}
                 />
+                {sheet === "collapsed" && (
+                  <button
+                    type="button"
+                    onClick={() => setSheet("half")}
+                    aria-label="Show details"
+                    className="absolute bottom-4 left-4 right-4 z-[1100] flex min-h-12 items-center gap-3 rounded-2xl border border-outline-variant bg-surface px-4 text-left shadow-lg lg:bottom-auto lg:left-auto lg:right-3 lg:top-3 lg:max-w-xs"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-primary">
+                      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                    </svg>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-on-surface">{summary}</span>
+                      {trafficMsg && (
+                        <span className="block truncate text-xs text-on-surface-variant">{trafficMsg}</span>
+                      )}
+                    </span>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-on-surface-variant">
+                      <path d="M6 15l6-6 6 6" />
+                    </svg>
+                  </button>
+                )}
               </div>
 
               <div className="hidden lg:block lg:flex-[0_0_35%] min-h-0 border-t border-outline-variant bg-surface overflow-y-auto sidebar-scroll">
