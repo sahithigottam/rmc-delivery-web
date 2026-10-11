@@ -1,8 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { SimState } from "@/types/route";
 import type { GpsState } from "@/hooks/useGpsTracking";
 import TruckIcon from "./TruckIcon";
+
+const GPS_STALE_MS = 2 * 60 * 1000;
+
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)} min ago`;
+}
 
 interface SimulationControlsProps {
   simState: SimState;
@@ -22,6 +30,10 @@ interface SimulationControlsProps {
   gpsSpeed: number | null;
   gpsError: string | null;
   gpsRemainingKm: number;
+  gpsLastFixAt?: number | null;
+  gpsLastSentAt?: number | null;
+  gpsPendingCount?: number;
+  gpsWakeLockActive?: boolean;
   gpsTrafficMsg: string | null;
   onGpsStart: () => void;
   onGpsStop: () => void;
@@ -54,12 +66,28 @@ export default function SimulationControls({
   gpsSpeed,
   gpsError,
   gpsRemainingKm,
+  gpsLastFixAt = null,
+  gpsLastSentAt = null,
+  gpsPendingCount = 0,
+  gpsWakeLockActive = false,
   gpsTrafficMsg,
   onGpsStart,
   onGpsStop,
 }: SimulationControlsProps) {
   const pct = Math.round(progress * 100);
   const isActive = simState === "running" || simState === "paused";
+
+  // Re-render every 5 s so the "X ago" labels stay current
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!gpsMode || gpsState !== "active") return;
+    const t = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(t);
+  }, [gpsMode, gpsState]);
+  const fixAge = gpsLastFixAt != null ? now - gpsLastFixAt : null;
+  const sentAge = gpsLastSentAt != null ? now - gpsLastSentAt : null;
+  const fixStale = fixAge != null && fixAge > GPS_STALE_MS;
+  const sendStale = gpsState === "active" && (sentAge == null ? gpsPendingCount > 0 : sentAge > GPS_STALE_MS);
 
   return (
     <div className="space-y-3">
@@ -120,6 +148,34 @@ export default function SimulationControls({
             )}
           </div>
 
+          {/* Freshness of GPS and uploads */}
+          {gpsState === "active" && (
+            <div className="space-y-1 px-1 text-[11px]">
+              <p className={fixStale ? "text-amber-700" : "text-on-surface-variant"}>
+                {fixStale ? "⚠️ " : ""}GPS fix {fixAge != null ? ago(fixAge) : "—"}
+                {" · "}
+                Sent to office {sentAge != null ? ago(sentAge) : "not yet"}
+              </p>
+              {gpsPendingCount > 0 && (
+                <p className="text-amber-700">
+                  📶 {gpsPendingCount} location{gpsPendingCount !== 1 ? "s" : ""} waiting to send. They&apos;ll upload when the signal returns.
+                </p>
+              )}
+              {(fixStale || sendStale) && (
+                <p className="text-amber-700">
+                  {fixStale
+                    ? "No fresh GPS signal. Move to open sky and keep this screen on."
+                    : "The office isn't receiving your location. Check your internet connection."}
+                </p>
+              )}
+              <p className="text-on-surface-variant/70">
+                {gpsWakeLockActive
+                  ? "🔆 Screen kept awake while tracking"
+                  : "Screen may sleep on this device. Keep this page open and the screen on."}
+              </p>
+            </div>
+          )}
+
           {/* Traffic message */}
           {gpsTrafficMsg && (
             <p className="text-xs text-md-yellow px-1">{gpsTrafficMsg}</p>
@@ -153,6 +209,9 @@ export default function SimulationControls({
       {/* ── SIMULATION MODE ── */}
       {!gpsMode && (
         <div className="space-y-3">
+          <p className="text-[11px] text-on-surface-variant bg-surface-container rounded-lg px-3 py-2">
+            Demo only — shown on this screen and not sent to the office. Use Real GPS to track the trip.
+          </p>
           {/* Speed selector */}
           <div>
             <label className="block text-xs font-medium text-on-surface-variant mb-1.5">

@@ -46,6 +46,7 @@ export default function MapView({
   const traversedLayerRef = useRef<L.Polyline | null>(null);
   const remainingLayerRef = useRef<L.Polyline | null>(null);
   const truckMarkerRef = useRef<L.Marker | null>(null);
+  const fittedRouteIdRef = useRef<number | null>(null);
 
   /* ── Initialize map once ── */
   useEffect(() => {
@@ -149,6 +150,9 @@ export default function MapView({
     ).addTo(map);
     routeLayerRef.current = routeLine;
 
+    // A reroute redraws the same route; keep the user's current zoom and pan
+    if (fittedRouteIdRef.current === route.id) return;
+    fittedRouteIdRef.current = route.id;
     map.fitBounds(
       routeLine.getBounds(),
       !window.matchMedia("(min-width: 64rem)").matches
@@ -170,8 +174,8 @@ export default function MapView({
       simState === "paused" ||
       simState === "finished"
     ) {
-      // Remove static route line while simulating
-      if (routeLayerRef.current) {
+      // Swap the static line for the animated one only when there is an animated path (GPS mode has none)
+      if (routeLayerRef.current && animationPoints.length > 0) {
         map.removeLayer(routeLayerRef.current);
         routeLayerRef.current = null;
       }
@@ -202,19 +206,6 @@ export default function MapView({
         remainingLayerRef.current = remaining;
       }
 
-      // Truck marker
-      if (!truckMarkerRef.current && animationPoints.length > 0) {
-        const truckIcon = L.divIcon({
-          html: '<img src="https://img.freepik.com/free-vector/truck-cement-mixer-cartoon-vector-icon-illustration-transportation-vehicle-icon-isolated-flat_138676-13348.jpg" alt="RMC Truck" style="width:40px;height:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));border-radius:50%;background:white;padding:2px;" />',
-          iconSize: [44, 44],
-          iconAnchor: [22, 22],
-          className: "",
-        });
-        truckMarkerRef.current = L.marker(animationPoints[0], {
-          icon: truckIcon,
-          zIndexOffset: 1000,
-        }).addTo(map);
-      }
     }
 
     if (simState === "idle") {
@@ -231,14 +222,45 @@ export default function MapView({
         map.removeLayer(truckMarkerRef.current);
         truckMarkerRef.current = null;
       }
+      if (!routeLayerRef.current && route?.polyline) {
+        routeLayerRef.current = L.polyline(
+          decodePolyline(route.polyline).map((p) => [p[0], p[1]] as L.LatLngTuple),
+          { weight: 5, color: "#1a73e8", opacity: 1 }
+        ).addTo(map);
+      }
     }
-  }, [simState, animationPoints]);
+  }, [simState, animationPoints, route]);
 
-  /* ── Update truck position each tick ── */
+  /* ── Show current driver position in simulation and GPS modes ── */
   useEffect(() => {
-    if (!truckPosition || !truckMarkerRef.current) return;
+    const map = mapRef.current;
+    if (!map) return;
 
-    truckMarkerRef.current.setLatLng(truckPosition);
+    if (!truckPosition) {
+      if (truckMarkerRef.current) {
+        map.removeLayer(truckMarkerRef.current);
+        truckMarkerRef.current = null;
+      }
+      return;
+    }
+
+    if (!truckMarkerRef.current) {
+      const truckIcon = L.divIcon({
+        html: '<img src="https://img.freepik.com/free-vector/truck-cement-mixer-cartoon-vector-icon-illustration-transportation-vehicle-icon-isolated-flat_138676-13348.jpg" alt="Driver location" style="width:40px;height:40px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));border-radius:50%;background:white;padding:2px;" />',
+        iconSize: [44, 44],
+        iconAnchor: [22, 22],
+        className: "",
+      });
+      truckMarkerRef.current = L.marker(truckPosition, {
+        icon: truckIcon,
+        zIndexOffset: 1000,
+        alt: "Driver location",
+      })
+        .bindPopup("Driver's current location")
+        .addTo(map);
+    } else {
+      truckMarkerRef.current.setLatLng(truckPosition);
+    }
 
     if (traversedLayerRef.current) {
       traversedLayerRef.current.setLatLngs(
@@ -250,7 +272,7 @@ export default function MapView({
         animationPoints.slice(currentPointIndex)
       );
     }
-  }, [truckPosition, currentPointIndex, animationPoints]);
+  }, [truckPosition, currentPointIndex, animationPoints, route, simState]);
 
   /* ── Replace remaining polyline on reroute ── */
   // This is handled by the parent passing new animationPoints

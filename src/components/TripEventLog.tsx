@@ -3,9 +3,11 @@
 import { useState, useEffect } from "react";
 import type { TripEventResponse } from "@/types/route";
 import { getTripEvents } from "@/lib/api";
+import { parseApiTime } from "@/lib/time";
 
 interface TripEventLogProps {
   tripId: number | null;
+  live?: boolean;
 }
 
 const EVENT_CONFIG: Record<string, { icon: string; color: string; label: string }> = {
@@ -23,23 +25,45 @@ const EVENT_CONFIG: Record<string, { icon: string; color: string; label: string 
   delay_cleared: { icon: "✓", color: "text-md-green", label: "Delay Cleared" },
 };
 
-export default function TripEventLog({ tripId }: TripEventLogProps) {
+export default function TripEventLog({ tripId, live = false }: TripEventLogProps) {
   const [events, setEvents] = useState<TripEventResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     if (!tripId) {
       setEvents([]);
+      setError(false);
       return;
     }
 
+    let cancelled = false;
+    const loadEvents = async () => {
+      try {
+        const latestEvents = await getTripEvents(tripId, 20);
+        if (!cancelled) {
+          setEvents(latestEvents);
+          setError(false);
+        }
+      } catch (err) {
+        console.error("Failed to load events:", err);
+        if (!cancelled) setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    setEvents([]);
     setLoading(true);
-    getTripEvents(tripId, 20)
-      .then(setEvents)
-      .catch((err) => console.error("Failed to load events:", err))
-      .finally(() => setLoading(false));
-  }, [tripId]);
+    setExpanded(false);
+    void loadEvents();
+    const interval = live ? setInterval(loadEvents, 15_000) : null;
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+    };
+  }, [tripId, live]);
 
   if (!tripId) return null;
 
@@ -54,7 +78,7 @@ export default function TripEventLog({ tripId }: TripEventLogProps) {
   if (events.length === 0) {
     return (
       <div className="p-4 rounded-xl bg-surface-container text-center text-sm text-on-surface-variant">
-        No events yet
+        {error ? "Could not load trip events" : "No events yet"}
       </div>
     );
   }
@@ -101,7 +125,7 @@ export default function TripEventLog({ tripId }: TripEventLogProps) {
                       {config.label}
                     </span>
                     <span className="text-xs text-on-surface-variant flex-shrink-0">
-                      {new Date(event.created_at).toLocaleTimeString([], {
+                      {parseApiTime(event.created_at)?.toLocaleTimeString([], {
                         hour: '2-digit',
                         minute: '2-digit',
                         second: '2-digit'

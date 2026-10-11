@@ -1,14 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { TripResponse, TripStatus } from "@/types/route";
 import { beginTrip, pauseTrip, resumeTrip, completeTrip, cancelTrip } from "@/lib/api";
 import { showToast } from "./Toast";
 import TruckIcon from "./TruckIcon";
+import { formatInZone, timeZoneForTrip, zoneLabel, zonedInputToUtcIso } from "@/lib/time";
 
 interface TripManagementProps {
   trip: TripResponse | null;
   onTripUpdated: (trip: TripResponse) => void;
+  /** Latest known driver position [lat, lng], used to check the driver is at the site before completing */
+  driverPosition?: [number, number] | null;
+  /** GPS accuracy (m) of driverPosition, when it comes from this device */
+  driverAccuracyM?: number | null;
+}
+
+export const COMPLETION_RADIUS_M = 100;
+
+function distanceMeters(a: [number, number], b: [number, number]): number {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function formatDistance(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
 }
 
 const STATUS_CONFIG: Record<TripStatus, { label: string; dot: string; icon: string }> = {
@@ -42,7 +64,7 @@ function LoadTimerBar({ minutes, max }: { minutes: number; max: number }) {
   );
 }
 
-export default function TripManagement({ trip, onTripUpdated }: TripManagementProps) {
+export default function TripManagement({ trip, onTripUpdated, driverPosition, driverAccuracyM }: TripManagementProps) {
   const [loading, setLoading] = useState(false);
 
   // Begin trip state
@@ -54,6 +76,15 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
   const [showCompleteForm, setShowCompleteForm] = useState(false);
   const [outcomeSuccess, setOutcomeSuccess] = useState<boolean | null>(null);
   const [outcomeNotes, setOutcomeNotes] = useState("");
+
+  useEffect(() => {
+    setShowBeginForm(false);
+    setBatchTime("");
+    setRequiresRetarder(false);
+    setShowCompleteForm(false);
+    setOutcomeSuccess(null);
+    setOutcomeNotes("");
+  }, [trip?.id]);
 
   if (!trip) {
     return (
@@ -69,13 +100,37 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
   const cfg = STATUS_CONFIG[trip.status];
   const isActive = trip.status === "in_progress" || trip.status === "paused";
   const isDone = trip.status === "completed" || trip.status === "cancelled";
+  const siteTz = timeZoneForTrip(trip);
+
+  // Completing away from the job site is allowed, but the driver is warned
+  // and the backend flags the trip for review.
+  const distanceToSiteM = driverPosition
+    ? distanceMeters(driverPosition, [trip.end_lat, trip.end_lng])
+    : null;
+  // A fix less precise than the completion radius can't prove the driver is at the site
+  const lowAccuracy = driverAccuracyM != null && driverAccuracyM > COMPLETION_RADIUS_M;
+  const atSite =
+    distanceToSiteM !== null && distanceToSiteM <= COMPLETION_RADIUS_M && !lowAccuracy;
+  const offSiteWarning = atSite
+    ? null
+    : distanceToSiteM === null
+      ? "Driver location unknown. Completing now will be flagged for review."
+      : lowAccuracy && distanceToSiteM <= COMPLETION_RADIUS_M
+        ? `GPS is only accurate to ±${Math.round(driverAccuracyM!)} m, so arrival at the site can't be confirmed. Completing now may be flagged for review.`
+        : `Driver is ${formatDistance(distanceToSiteM)} from the site (more than ${COMPLETION_RADIUS_M} m). Completing now will be flagged for review.`;
+
+  // The backend rejects a successful completion of an expired load unless a reason is given
+  const loadExpired =
+    trip.load_status === "expired" ||
+    (trip.load_minutes_remaining != null && trip.load_minutes_remaining <= 0);
+  const notesRequired = outcomeSuccess === false || (outcomeSuccess === true && loadExpired);
 
   /*  Handlers  */
   const handleBegin = async () => {
     setLoading(true);
     try {
       const updated = await beginTrip(trip.id, {
-        batch_time: batchTime ? new Date(batchTime).toISOString() : undefined,
+        batch_time: batchTime ? zonedInputToUtcIso(batchTime, siteTz) : undefined,
         requires_retarder: requiresRetarder,
       });
       onTripUpdated(updated);
@@ -90,11 +145,28 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
 
   const handleComplete = async () => {
     if (outcomeSuccess === null) { showToast("Please choose succeeded or failed", "error"); return; }
+    if (notesRequired && !outcomeNotes.trim()) {
+      showToast(
+        outcomeSuccess
+          ? "The load has expired. Please explain why it was still delivered"
+          : "Please add a reason for the failed delivery",
+        "error",
+      );
+      return;
+    }
+    if (!atSite) {
+      const where = distanceToSiteM === null
+        ? "Your location is unknown"
+        : lowAccuracy && distanceToSiteM <= COMPLETION_RADIUS_M
+          ? `Your GPS is only accurate to ±${Math.round(driverAccuracyM!)} m, so we can't confirm you're at the site`
+          : `You're ${formatDistance(distanceToSiteM)} away from the delivery site`;
+      if (!confirm(`${where}. This trip may be flagged for review.\n\nComplete anyway?`)) return;
+    }
     setLoading(true);
     try {
       const updated = await completeTrip(trip.id, {
         success: outcomeSuccess,
-        notes: outcomeNotes || undefined,
+        notes: outcomeNotes.trim() || undefined,
       });
       onTripUpdated(updated);
       setShowCompleteForm(false);
@@ -158,7 +230,7 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
           <p> {trip.start_address}</p>
           <p> {trip.end_address}</p>
           {trip.scheduled_at && (
-            <p> Scheduled: {new Date(trip.scheduled_at).toLocaleString("en-NZ", { dateStyle: "medium", timeStyle: "short" })}</p>
+            <p> Scheduled: {formatInZone(trip.scheduled_at, siteTz, "full")}</p>
           )}
         </div>
 
@@ -215,7 +287,7 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
               <div className="px-3 py-2 rounded-lg bg-surface-container-low">
                 <p className="text-[11px] text-on-surface-variant">ETA</p>
                 <p className="text-sm font-semibold text-on-surface">
-                  {new Date(trip.estimated_arrival).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  {formatInZone(trip.estimated_arrival, siteTz, "time")}
                 </p>
               </div>
             )}
@@ -232,6 +304,12 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
         {isDone && trip.outcome && (
           <div className={`px-3 py-2 rounded-lg text-sm font-medium ${trip.outcome === "succeeded" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
             {trip.outcome === "succeeded" ? " Delivered successfully" : " Delivery failed"}
+          </div>
+        )}
+        {isDone && trip.completion_review_required && (
+          <div role="status" className="px-3 py-2 rounded-lg text-xs font-medium bg-amber-50 text-amber-800">
+            ⚠️ Flagged for review: {trip.completion_review_reason ?? "completed away from the site"}
+            {trip.completion_distance_meters != null && ` (${formatDistance(trip.completion_distance_meters)} from site)`}
           </div>
         )}
       </div>
@@ -251,7 +329,7 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
-                  BATCH TIME (leave blank to use now)
+                  BATCH TIME ({zoneLabel(siteTz)}, leave blank to use now)
                 </label>
                 <input
                   type="datetime-local"
@@ -350,9 +428,20 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
       )}
 
       {/*  Complete outcome dialog  */}
-      {showCompleteForm && (
+      {showCompleteForm && trip.status === "in_progress" && (
         <div className="p-4 rounded-xl border border-outline-variant bg-surface-container space-y-3">
           <p className="text-sm font-semibold text-on-surface">Mark as Completed</p>
+
+          <p
+            role="status"
+            className={`text-xs rounded-lg px-3 py-2 ${
+              atSite ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+            }`}
+          >
+            {atSite
+              ? `Driver is at the site (${formatDistance(distanceToSiteM!)} away).`
+              : offSiteWarning}
+          </p>
 
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -377,10 +466,20 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
             </button>
           </div>
 
+          {loadExpired && outcomeSuccess === true && (
+            <p role="status" className="text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700">
+              This load has passed its concrete life. Explain why it was still poured (required).
+            </p>
+          )}
+
           <textarea
             value={outcomeNotes}
             onChange={(e) => setOutcomeNotes(e.target.value)}
-            placeholder="Notes (optional) — e.g. 'Poured on time, minor slump issue'"
+            placeholder={outcomeSuccess === false
+              ? "Reason for failure (required) — e.g. 'Truck broke down', 'Site refused load'"
+              : outcomeSuccess === true && loadExpired
+                ? "Reason (required) — e.g. 'Site engineer approved after slump test'"
+                : "Notes (optional) — e.g. 'Poured on time, minor slump issue'"}
             rows={2}
             className="w-full px-3 py-2 rounded-xl border border-outline-variant bg-surface text-sm placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary transition-colors resize-none"
           />
@@ -388,7 +487,11 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
           <div className="flex gap-2">
             <button
               onClick={handleComplete}
-              disabled={loading || outcomeSuccess === null}
+              disabled={
+                loading ||
+                outcomeSuccess === null ||
+                (notesRequired && !outcomeNotes.trim())
+              }
               className="flex-1 py-2 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:shadow-md transition-all disabled:opacity-40"
             >
               {loading ? "Saving" : "Confirm"}
@@ -406,7 +509,7 @@ export default function TripManagement({ trip, onTripUpdated }: TripManagementPr
       {/* Last traffic check */}
       {trip.last_traffic_check_at && isActive && (
         <p className="text-xs text-on-surface-variant text-center">
-          Last traffic check: {new Date(trip.last_traffic_check_at).toLocaleTimeString()}
+          Last traffic check: {formatInZone(trip.last_traffic_check_at, siteTz, "time")}
         </p>
       )}
     </div>
