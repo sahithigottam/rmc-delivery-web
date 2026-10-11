@@ -350,6 +350,30 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
         <div className="space-y-3">
           <h3 className="font-semibold text-on-surface">Plan Delivery</h3>
 
+          {/* Country */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
+              COUNTRY
+            </label>
+            <select
+              value={country}
+              onChange={(e) => {
+                const nextCountry = e.target.value as SearchCountry;
+                setCountry(nextCountry);
+                setRegionId("");
+                setJobSite("");
+                setJobSiteData(null);
+                setAnalysis(null);
+                setAnalysisKey("");
+              }}
+              disabled={loading}
+              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
+            >
+              <option value="nz">New Zealand</option>
+              <option value="in">India</option>
+            </select>
+          </div>
+
           {/* Brand */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">CONCRETE BRAND</label>
@@ -400,30 +424,6 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
               ))}
             </div>
             <p className="text-xs text-on-surface-variant">{MIX_LABELS[mix]}</p>
-          </div>
-
-          {/* Job site */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
-              COUNTRY
-            </label>
-            <select
-              value={country}
-              onChange={(e) => {
-                const nextCountry = e.target.value as SearchCountry;
-                setCountry(nextCountry);
-                setRegionId("");
-                setJobSite("");
-                setJobSiteData(null);
-                setAnalysis(null);
-                setAnalysisKey("");
-              }}
-              disabled={loading}
-              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
-            >
-              <option value="nz">New Zealand</option>
-              <option value="in">India</option>
-            </select>
           </div>
 
           {countryRegions.length > 0 && (
