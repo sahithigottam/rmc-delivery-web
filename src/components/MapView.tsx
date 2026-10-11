@@ -40,6 +40,10 @@ export default function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const insetRef = useRef(bottomInsetRatio);
   insetRef.current = bottomInsetRatio;
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  const positionRef = useRef(truckPosition);
+  positionRef.current = truckPosition;
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Layer[]>([]);
   const routeLayerRef = useRef<L.Polyline | null>(null);
@@ -47,6 +51,33 @@ export default function MapView({
   const remainingLayerRef = useRef<L.Polyline | null>(null);
   const truckMarkerRef = useRef<L.Marker | null>(null);
   const fittedRouteIdRef = useRef<number | null>(null);
+
+  const fitLocations = useCallback((points: L.LatLngTuple[], maxZoom: number) => {
+    const map = mapRef.current;
+    if (!map || !points.length) return;
+    const mobile = !window.matchMedia("(min-width: 64rem)").matches;
+    // The full sheet covers the map. Fit when it is lowered instead.
+    if (mobile && insetRef.current >= 0.8) return;
+    map.fitBounds(L.latLngBounds(points), {
+      paddingTopLeft: [36, 96],
+      paddingBottomRight: [36, mobile ? 40 + map.getSize().y * insetRef.current : 40],
+      maxZoom,
+    });
+  }, []);
+
+  const fitRoute = useCallback(() => {
+    const currentRoute = routeRef.current;
+    const position = positionRef.current;
+    const points: L.LatLngTuple[] = currentRoute
+      ? [
+          ...(currentRoute.polyline ? decodePolyline(currentRoute.polyline) : []) as L.LatLngTuple[],
+          [currentRoute.start_lat, currentRoute.start_lng],
+          [currentRoute.end_lat, currentRoute.end_lng],
+        ]
+      : [];
+    if (position) points.push(position);
+    fitLocations(points, currentRoute ? 16 : 15);
+  }, [fitLocations]);
 
   /* ── Initialize map once ── */
   useEffect(() => {
@@ -71,7 +102,10 @@ export default function MapView({
     mapRef.current = map;
 
     // Panels docking/undocking and device rotation resize the container without a window resize
-    const ro = new ResizeObserver(() => map.invalidateSize());
+    const ro = new ResizeObserver(() => {
+      map.invalidateSize();
+      fitRoute();
+    });
     ro.observe(containerRef.current);
 
     return () => {
@@ -79,7 +113,16 @@ export default function MapView({
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [fitRoute]);
+
+  useEffect(() => {
+    fitRoute();
+  }, [bottomInsetRatio, fitRoute]);
+
+  const hasDriverPosition = truckPosition !== null;
+  useEffect(() => {
+    if (hasDriverPosition) fitRoute();
+  }, [hasDriverPosition, fitRoute]);
 
   /* ── Clear previous layers helper ── */
   const clearLayers = useCallback(() => {
@@ -108,35 +151,42 @@ export default function MapView({
   /* ── Draw static route when route changes ── */
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !route?.polyline) return;
+    if (!map) return;
 
     clearLayers();
+    if (!route) {
+      fittedRouteIdRef.current = null;
+      return;
+    }
 
-    const pts = decodePolyline(route.polyline) as [number, number][];
+    const pts = route.polyline ? decodePolyline(route.polyline) as [number, number][] : [];
 
     // Start marker
-    const startMarker = L.circleMarker(
-      [route.start_lat, route.start_lng],
-      {
-        radius: 10,
-        color: "white",
-        fillColor: "#1a73e8",
-        fillOpacity: 1,
-        weight: 3,
-      }
-    )
+    const startIcon = L.icon({
+      iconUrl: "/markers/plant.svg",
+      iconSize: [56, 64],
+      iconAnchor: [28, 62],
+      popupAnchor: [0, -54],
+    });
+    const startMarker = L.marker([route.start_lat, route.start_lng], {
+      icon: startIcon,
+      alt: "Plant / route start",
+      title: "Plant / route start",
+    })
       .bindPopup(route.resolved_start_address)
       .addTo(map);
 
     // End marker
-    const endIcon = L.divIcon({
-      html: '<div style="font-size:24px;">📍</div>',
-      iconSize: [24, 24],
-      iconAnchor: [12, 24],
-      className: "",
+    const endIcon = L.icon({
+      iconUrl: "/markers/destination.svg",
+      iconSize: [56, 64],
+      iconAnchor: [28, 62],
+      popupAnchor: [0, -54],
     });
     const endMarker = L.marker([route.end_lat, route.end_lng], {
       icon: endIcon,
+      alt: "Destination / job site",
+      title: "Destination / job site",
     })
       .bindPopup(route.resolved_end_address)
       .addTo(map);
@@ -153,16 +203,8 @@ export default function MapView({
     // A reroute redraws the same route; keep the user's current zoom and pan
     if (fittedRouteIdRef.current === route.id) return;
     fittedRouteIdRef.current = route.id;
-    map.fitBounds(
-      routeLine.getBounds(),
-      !window.matchMedia("(min-width: 64rem)").matches
-        ? {
-            paddingTopLeft: [32, 48],
-            paddingBottomRight: [32, 48 + map.getSize().y * insetRef.current],
-          }
-        : { padding: [60, 80] }
-    );
-  }, [route, clearLayers]);
+    fitRoute();
+  }, [route, clearLayers, fitRoute]);
 
   /* ── Simulation: add truck + traversed/remaining when sim starts ── */
   useEffect(() => {
@@ -278,10 +320,6 @@ export default function MapView({
   // This is handled by the parent passing new animationPoints
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-full"
-      style={{ minHeight: "100%" }}
-    />
+    <div ref={containerRef} className="w-full h-full" style={{ minHeight: "100%" }} />
   );
 }

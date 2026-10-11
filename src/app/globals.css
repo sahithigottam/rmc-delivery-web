@@ -19,6 +19,12 @@ body {
   height: 100%;
 }
 
+/* Keep the dynamic height after the fallback; Tailwind's h-screen overrides h-dvh. */
+.app-viewport {
+  height: 100vh;
+  height: 100dvh;
+}
+
 html,
 body {
   overscroll-behavior: none;

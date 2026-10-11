@@ -46,7 +46,7 @@ export default function CapabilityGate({
   }
 
   return (
-    <div className="flex flex-col h-screen h-dvh bg-surface text-on-surface">
+    <div className="app-viewport flex flex-col bg-surface text-on-surface">
       <header className="flex items-center min-h-14 gap-3 px-3 bg-primary text-on-primary">
         <span className="flex-1 font-medium">RMC Delivery</span>
         <AuthControls />

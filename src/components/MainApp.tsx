@@ -263,7 +263,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   }
 
   return (
-    <div className="flex flex-col h-screen h-dvh pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+    <div className="app-viewport flex flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       <ToastContainer />
 
       {/* Top bar */}
@@ -527,7 +527,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                     : activeTruckPosition}
                   animationPoints={viewedTrip || gpsMode ? [] : sim.animationPoints}
                   currentPointIndex={viewedTrip || gpsMode ? 0 : sim.currentPointIndex}
-                  bottomInsetRatio={sheet === "half" ? 0.55 : sheet === "full" ? 0.9 : 0.1}
+                  bottomInsetRatio={sheet === "half" ? 0.55 : sheet === "full" ? 1 : 0.1}
                 />
                 {!mapRoute && (
                   <div className="absolute inset-0 flex items-start pt-10 lg:items-center lg:pt-0 justify-center pointer-events-none z-[400]">

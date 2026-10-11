@@ -59,6 +59,10 @@ touch minimum and the fixed panel widths above.
 - Clickable labels never wrap (gate 49): shorten, then `whitespace-nowrap`.
 - Heights use `dvh` with a `vh` fallback; bottom bars and sheets respect
   `env(safe-area-inset-bottom)`; viewport uses `viewport-fit=cover`.
+- Full-height application shells use the shared `app-viewport` class, with
+  `100dvh` declared after `100vh`. Do not combine Tailwind `h-screen` and `h-dvh`:
+  generated utility order lets `h-screen` win and clips navigation under mobile
+  browser toolbars.
 - Map container resizes call `invalidateSize` (ResizeObserver).
 - Minimise button (every width) hides the panel; a floating pill over the map shows
   distance, speed or traffic message and brings the panel back. Panel states: hidden,
@@ -88,6 +92,13 @@ panel + map pattern, the 48px touch rule.
 ## What pages MAY differ on
 Panel content, card vs table presentation of the same list data.
 No enrichment, no decorative imagery on app pages.
+Map endpoints use local illustrated SVG markers: a batching plant for the origin
+and a construction site for the destination. Their pin tips anchor to coordinates;
+address popups and the existing live truck marker remain unchanged.
+Automatic route framing includes the known driver position and respects the mobile
+sheet, without additional location buttons. Refit on layout
+changes and the first available driver position, not every GPS update; defer fitting
+while the full sheet covers the map so lowering it restores usable bounds.
 
 ## Known exceptions
 - `html, body { overflow: hidden }` (globals.css): app shell with inner scrollers.
