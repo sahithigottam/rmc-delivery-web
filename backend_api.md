@@ -95,7 +95,96 @@ REST API for calculating optimized delivery routes for New Zealand RMC (Ready-Mi
 
 ## Authentication
 
-Currently no authentication required. Implement JWT/API key auth in production.
+Every `/api/v1` request requires a verified Clerk session bearer token. The
+frontend calls `/auth/me` after login and organization changes and uses backend
+capabilities (`can_manage_businesses`, `can_manage_catalogue`,
+`can_operate_trips`) for navigation. UI checks never replace server authorization.
+Company operations require an active organization; the configured platform owner
+can manage businesses and catalogues without one.
+
+## Business, Plant and Geography Catalogues
+
+The structured catalogue replaces the old wire format directly under `/api/v1`;
+there is no `/v2` or raw-array/legacy plant adapter. Lists use
+`{items,total,limit,offset}`, with a maximum page size of 100.
+
+The navigation organization switcher hides Personal Account and the Create
+Organization action. This is a UI restriction only: disable user-created
+organizations in the Clerk Dashboard to enforce it. Hiding Personal Account
+does not remove backend platform-owner access without an active organization.
+
+Business and brand forms confirm server saves explicitly. Brand changes reload
+the opened business's plant catalogue so newly saved brands appear in plant
+selectors without leaving the business. Empty geography selectors explain the
+missing prerequisite. Opening Add/Edit Plant reloads backend catalogue lists;
+the form opens only after a successful reload.
+The reference-only `src/data/geography-reference.json` lists India (states and
+union territories) and New Zealand (administrative regions and Chatham Islands).
+It does not populate backend dropdowns or supply resource IDs.
+Setup order is Business → Brand, then business-owned Country →
+State → City → Operating Region, then Plant.
+
+The business registration form lists the signed-in user's Clerk organization
+memberships by name (with paginated loading), prefills the business name, and
+submits the selected organization's ID internally. It does not switch the active
+organization or list organizations the user does not belong to.
+Platform owners register businesses with existing Clerk `org_...` IDs, then
+manage business-owned brands and plants. Registration does not create or verify
+a Clerk organization. Company users have read-only catalogue access within their
+active business. Plants use brand/region IDs and nested `location` coordinates;
+the server derives plant ownership from its brand. Deactivate plants with PATCH,
+never hard-delete them.
+
+Business Geography inside an opened business supports verified
+Country → State/Province → City → Operating Region records:
+
+| Resource | Create body | Idempotency |
+| --- | --- | --- |
+| `/countries` | `{organization_id,code,name}` (uppercase ISO alpha-2) | Not supported |
+| `/states` | `{organization_id,country_code,name}` | Not supported |
+| `/cities` | `{state_id,name,timezone}` (IANA zone) | Not supported |
+| `/regions` | `{city_id,name}` | `Idempotency-Key` required |
+
+All geography reads require authentication. Only platform owners create geography
+or edit region links. Country/state/city records are not sourced from a verified
+worldwide dataset. Legacy region labels and manually mapped country/state/timezone
+metadata originate in the plant seed; the broad Auckland mapping needs review.
+Plant forms select
+country, state, city and a city-linked region; address search uses the selected
+country rather than assuming Auckland or Telangana. Coordinates can also be
+entered manually. Legacy regions are shown explicitly and can be linked to a
+verified city with `PATCH /regions/{id}` and `{name,city_id,version}`.
+
+Administration uses the business opened in Businesses, not the active Clerk
+organization. Country, state, city and region lists include its `organization_id`
+filter. Country detail and deletion also require that query parameter. City
+ownership is inherited from its state; region ownership is inherited from its
+city. Switching businesses remounts catalogue forms and clears cached selections;
+superseded or unmounted list requests cannot restore old results.
+Geography writes are unavailable in the global Plants screen until a business is
+opened. Dispatch, analysis, trips and job-site operational scope is unchanged.
+
+Region changes reset calibration to `uncalibrated`; `nz_baseline` is not proof
+of regional validation. Geography metadata does not approve concrete-life policies.
+
+Owners can DELETE unused `/countries/{code}`, `/states/{id}`, `/cities/{id}`
+and `/regions/{id}` from Business Geography after confirmation. Success is `204`
+with no response body. References return `409` and the backend's reason is shown.
+Deletion does not cascade and audit history is retained. Regions referenced by
+plants, including inactive plants, cannot be deleted.
+
+Business, brand, region and plant updates include the last-read `version`.
+`409 VERSION_CONFLICT` requires reviewing/reopening the latest record, not an
+automatic overwrite. Duplicate and idempotency conflicts are distinct from
+version conflicts. Catalogue business errors use the nested FastAPI envelope
+`{detail:{code,message,details}}`; field validation uses the standard `422 detail`
+array.
+
+Business/brand/region/plant creates preserve idempotency keys for identical
+payload retries. Geography creates have no such key: after an uncertain response,
+refresh and check for the existing record before retrying. The UI blocks another
+geography submission until the user confirms that check. Backend uniqueness
+constraints prevent duplicate dropdown options.
 
 ---
 

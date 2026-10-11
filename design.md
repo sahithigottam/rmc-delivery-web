@@ -60,8 +60,9 @@ touch minimum and the fixed panel widths above.
 - Heights use `dvh` with a `vh` fallback; bottom bars and sheets respect
   `env(safe-area-inset-bottom)`; viewport uses `viewport-fit=cover`.
 - Map container resizes call `invalidateSize` (ResizeObserver).
-- No separate Map tab: Live Trip and Dispatch are the map views; collapsing the sheet
-  shows the whole map.
+- Minimise button (every width) hides the panel; a floating pill over the map shows
+  distance, speed or traffic message and brings the panel back. Panel states: hidden,
+  half, full (phone and iPad portrait); hidden or docked (64rem and up).
 - lg+ nav collapses to an icon rail; choice persists in localStorage.
 - Short landscape phones (height under 32rem, width under 64rem): header hidden.
 
