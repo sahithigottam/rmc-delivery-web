@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TripResponse, TripStatus } from "@/types/route";
 import { beginTrip, pauseTrip, resumeTrip, completeTrip, cancelTrip } from "@/lib/api";
 import { showToast } from "./Toast";
 import TruckIcon from "./TruckIcon";
-import { formatInZone, timeZoneForTrip, zoneLabel, zonedInputToUtcIso } from "@/lib/time";
+import type { TripActionRequest } from "@/lib/liveTripSummary";
+import { isNearSite } from "@/lib/nearSite";
+import { applyReasonChip, reasonChips } from "@/lib/completionReasons";
+import { formatInZone, isEtaStale, timeZoneForTrip, zoneLabel, zonedInputToUtcIso } from "@/lib/time";
 
 interface TripManagementProps {
   trip: TripResponse | null;
@@ -21,6 +24,8 @@ interface TripManagementProps {
     onStartGps: () => void;
     onFormOpen: () => void;
   };
+  /** Triggers an action requested from the always-visible sheet header; each id is handled once */
+  actionRequest?: TripActionRequest | null;
 }
 
 export const COMPLETION_RADIUS_M = 100;
@@ -71,8 +76,11 @@ function LoadTimerBar({ minutes, max }: { minutes: number; max: number }) {
   );
 }
 
-export default function TripManagement({ trip, onTripUpdated, driverPosition, driverAccuracyM, driverControls }: TripManagementProps) {
+export default function TripManagement({ trip, onTripUpdated, driverPosition, driverAccuracyM, driverControls, actionRequest }: TripManagementProps) {
   const [loading, setLoading] = useState(false);
+  const handledRequestRef = useRef(actionRequest?.id ?? 0);
+  const formRef = useRef<HTMLDivElement>(null);
+  const scrollToFormRef = useRef(false);
 
   // Begin trip state
   const [showBeginForm, setShowBeginForm] = useState(false);
@@ -92,6 +100,31 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
     setOutcomeSuccess(null);
     setOutcomeNotes("");
   }, [trip?.id]);
+
+  useEffect(() => {
+    if (!actionRequest || actionRequest.id === handledRequestRef.current || !trip) return;
+    handledRequestRef.current = actionRequest.id;
+    if (actionRequest.type === "begin" && trip.status === "pending") {
+      scrollToFormRef.current = true;
+      setShowBeginForm(true);
+      driverControls?.onFormOpen();
+    } else if (actionRequest.type === "end" && trip.status === "in_progress") {
+      scrollToFormRef.current = true;
+      setShowCompleteForm(true);
+      driverControls?.onFormOpen();
+    } else if (actionRequest.type === "resume" && trip.status === "paused") {
+      void handleResume();
+    }
+    // handleResume is declared below and reads only trip.id and setters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionRequest?.id]);
+
+  // The header can request a form while the sheet is scrolled elsewhere
+  useEffect(() => {
+    if (!scrollToFormRef.current || !(showBeginForm || showCompleteForm)) return;
+    scrollToFormRef.current = false;
+    formRef.current?.scrollIntoView({ block: "nearest" });
+  }, [showBeginForm, showCompleteForm]);
 
   if (!trip) {
     return (
@@ -291,15 +324,22 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
                 <p className="text-sm font-semibold text-on-surface">{Math.round(trip.remaining_duration_seconds / 60)} min</p>
               </div>
             )}
-            {(driverControls || trip.estimated_arrival) && (
-              <div className="px-3 py-2 rounded-lg bg-surface-container-low">
-                <p className="text-[11px] text-on-surface-variant">ETA</p>
+            {(driverControls || trip.estimated_arrival) && (() => {
+              const etaStale = isEtaStale(trip.estimated_arrival);
+              return (
+              <div className={`px-3 py-2 rounded-lg ${etaStale ? "bg-amber-50 text-amber-800" : "bg-surface-container-low"}`}>
+                <p className={`text-[11px] ${etaStale ? "" : "text-on-surface-variant"}`}>ETA</p>
                 <p className="text-sm font-semibold text-on-surface">
-                  {trip.estimated_arrival ? formatInZone(trip.estimated_arrival, siteTz, "time")
+                  {etaStale ? "Outdated"
+                    : trip.estimated_arrival ? formatInZone(trip.estimated_arrival, siteTz, "time")
                     : trip.remaining_duration_seconds != null ? `${Math.round(trip.remaining_duration_seconds / 60)} min` : "Updating"}
                 </p>
+                {etaStale && trip.estimated_arrival && (
+                  <p className="text-[11px]">was {formatInZone(trip.estimated_arrival, siteTz, "time")}</p>
+                )}
               </div>
-            )}
+              );
+            })()}
             {driverControls && (
               <div className={`px-2 py-2 rounded-lg ${loadExpired ? "bg-md-red/10 text-error" : "bg-surface-container-low"}`}>
                 <p className="text-[11px]">LOAD TIME</p>
@@ -341,7 +381,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
 
       {/*  Pending: Begin Trip Form  */}
       {trip.status === "pending" && (
-        <div className={`${driverControls ? "sticky bottom-0 z-10" : ""} p-4 rounded-xl bg-surface-container space-y-3`}>
+        <div ref={formRef} className={`${driverControls ? "sticky bottom-0 z-10" : ""} p-4 rounded-xl bg-surface-container space-y-3`}>
           <div className="flex items-center gap-2">
             <TruckIcon size={22} />
             <div>
@@ -432,7 +472,9 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
               <button
                 onClick={() => { setShowCompleteForm(t => !t); driverControls?.onFormOpen(); }}
                 disabled={loading}
-                className="flex-1 py-2 rounded-xl bg-md-green text-white text-sm font-semibold hover:shadow-md transition-all disabled:opacity-50"
+                className={`flex-1 py-2 rounded-xl text-sm disabled:opacity-50 ${driverControls && !isNearSite(driverPosition, trip)
+                  ? "border border-outline-variant font-medium text-on-surface-variant"
+                  : "bg-md-green text-white font-semibold hover:shadow-md transition-all"}`}
               >
                  End Trip
               </button>
@@ -461,7 +503,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
 
       {/*  Complete outcome dialog  */}
       {showCompleteForm && trip.status === "in_progress" && (
-        <div className="p-4 rounded-xl border border-outline-variant bg-surface-container space-y-3">
+        <div ref={formRef} className="p-4 rounded-xl border border-outline-variant bg-surface-container space-y-3">
           <p className="text-sm font-semibold text-on-surface">End Trip</p>
 
           <p
@@ -505,6 +547,29 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
               This load has passed its concrete life. Explain why it was still poured (required).
             </p>
           )}
+
+          {(() => {
+            const chips = reasonChips(outcomeSuccess, loadExpired);
+            return chips.length > 0 && (
+              <div role="group" aria-label="Quick reasons" className="flex flex-wrap gap-2">
+                {chips.map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    aria-pressed={outcomeNotes.trim() === chip}
+                    onClick={() => setOutcomeNotes(applyReasonChip(outcomeNotes, chip, chips))}
+                    className={`min-h-12 rounded-full border px-4 text-sm ${
+                      outcomeNotes.trim() === chip
+                        ? "border-primary bg-primary-container font-medium text-primary"
+                        : "border-outline-variant text-on-surface-variant"
+                    }`}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
 
           <textarea
             aria-label={notesRequired ? "Delivery notes (required)" : "Delivery notes (optional)"}

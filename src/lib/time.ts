@@ -29,6 +29,16 @@ export function parseApiTime(iso: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** True once an estimated arrival has passed (after a short grace), so it is no longer a forecast. */
+export function isEtaStale(
+  iso: string | null | undefined,
+  now: number = Date.now(),
+  graceMs = 60_000,
+): boolean {
+  const at = parseApiTime(iso)?.getTime();
+  return at !== undefined && now > at + graceMs;
+}
+
 export function timeZoneForCountry(country: "in" | "nz" | "IN" | "NZ"): SiteTimeZone {
   return country.toLowerCase() === "in" ? "Asia/Kolkata" : "Pacific/Auckland";
 }

@@ -108,6 +108,13 @@ while the full sheet covers the map so lowering it restores usable bounds.
   and GPS status. Stage actions stay ahead of secondary content: Start Trip,
   Start GPS, then End Trip. The existing completion flow retains succeeded/failed,
   required failure/expired-load notes and off-site review confirmation.
+- The sheet header and the collapsed bar always show the live trip's distance,
+  arrival time, stage (and any GPS problem) plus one next action: Start Trip,
+  Start GPS, End Trip or Resume. The header action only opens the existing form
+  or runs the existing action; completion checks are unchanged.
+- An estimated arrival that has already passed (after a one-minute grace) is
+  shown as "ETA outdated", never as a time, because the backend only refreshes
+  it on a successful traffic check. No replacement time is guessed.
 - GPS/simulation settings sit above the active trip card, outside More details,
   with a Simulation/GPS switch. Switching modes stops the previous mode;
   starting GPS still requires the explicit Start GPS action.
@@ -132,9 +139,10 @@ while the full sheet covers the map so lowering it restores usable bounds.
   traffic/reroute messages and distance milestones at least two minutes apart.
   Muting, leaving the trip view or unmounting cancels speech immediately.
   Unsupported browsers and speech errors display explicit messages.
-- Sound has one stable Live Trip toolbar above the map/details area, including
-  trips opened from the list. Expanding or minimising the sheet does not cover,
-  relocate or remount the control. Switching trips resets sound to off.
+- Sound is one small round icon button on the map, under the route legend, like
+  the zoom control. It is mounted once outside the sheet, shown for trips opened
+  from the list, and hidden only while the sheet fully covers the map. There is no
+  separate header row for it. Switching trips resets sound to off.
 - These are status announcements, not turn-by-turn navigation. The backend currently
   reroutes for traffic thresholds, not explicit off-route detection.
 

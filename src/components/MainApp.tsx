@@ -3,11 +3,13 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getActiveTrips, getTrip, getRoute } from "@/lib/api";
-import { formatInZone, timeZoneForTrip } from "@/lib/time";
+import { formatInZone, isEtaStale, timeZoneForTrip } from "@/lib/time";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useGpsTracking } from "@/hooks/useGpsTracking";
 import { useTripStream } from "@/hooks/useTripStream";
 import { decodePolyline, remainingRoute } from "@/lib/polyline";
+import { liveTripSummary, nextTripAction, tripStatusLabel, type TripActionRequest, type TripActionType } from "@/lib/liveTripSummary";
+import { isNearSite } from "@/lib/nearSite";
 import DriverVoiceToggle from "@/components/DriverVoiceToggle";
 import SimulationControls from "@/components/SimulationControls";
 import TripManagement from "@/components/TripManagement";
@@ -44,6 +46,8 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   const [activeTab, setActiveTab] = useState<ActiveTab>(tabs[0] ?? "plants");
   const [gpsMode, setGpsMode] = useState(false);
   const [sheet, setSheet] = useState<SheetState>("half");
+  const [actionRequest, setActionRequest] = useState<TripActionRequest | null>(null);
+  const actionRequestCount = useRef(0);
   const tripSelectionRef = useRef(false);
   const userNavigationRef = useRef(false);
   const dragStartY = useRef<number | null>(null);
@@ -279,6 +283,56 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
     }
   }
 
+  // The live trip's stage, numbers and next action stay visible in the sheet header and collapsed bar
+  let summaryDetail: string | null = null;
+  let headerAction: { type: TripActionType; label: string } | null = null;
+  if (activeTab === "trip" && !viewedTrip && trip) {
+    const simActive = !gpsMode && sim.simState !== "idle";
+    const gpsRunning = gpsMode && (gps.gpsState === "active" || gps.gpsState === "requesting");
+    let note: string | null = null;
+    if (trip.status === "in_progress") {
+      if (gpsMode && gps.gpsState === "error") note = gps.gpsError ?? "GPS error";
+      else if (!gpsRunning && !simActive) note = "GPS not started";
+      else if (simActive) note = sim.simState === "finished" ? "Simulation finished" : "Simulation";
+    }
+    const live = liveTripSummary({
+      tripId: trip.id,
+      status: trip.status,
+      remainingKm: simActive && sim.simState !== "finished" ? sim.remainingKm : roadRemainingKm,
+      arrivalTime: !simActive && trip.estimated_arrival
+        ? formatInZone(trip.estimated_arrival, timeZoneForTrip(trip), "time")
+        : null,
+      arrivalStale: !simActive && isEtaStale(trip.estimated_arrival),
+      note: note ?? trafficMsg,
+    });
+    summary = live.primary;
+    summaryDetail = live.secondary;
+    headerAction = nextTripAction(trip.status, gpsRunning, isNearSite(activeTruckPosition, trip));
+  } else if (activeTab === "trip" && viewedTrip) {
+    // A trip opened from the list shows its own stage, never the live trip's GPS state
+    summary = `Trip #${viewedTrip.id}`;
+    summaryDetail = tripStatusLabel(viewedTrip.status);
+  }
+  const requestTripAction = (type: TripActionType) => {
+    if (type === "start-gps") {
+      startDriverGps();
+      return;
+    }
+    actionRequestCount.current += 1;
+    setActionRequest({ type, id: actionRequestCount.current });
+  };
+  const headerActionButton = headerAction && ((action) => (
+    <button
+      type="button"
+      onClick={() => requestTripAction(action.type)}
+      className="flex min-h-12 flex-shrink-0 items-center whitespace-nowrap px-1"
+    >
+      <span className={`rounded-lg px-3 py-1.5 text-sm font-medium ${action.type === "end" ? "border border-primary text-primary" : "bg-primary text-on-primary"}`}>
+        {action.label}
+      </span>
+    </button>
+  ))(headerAction);
+
   return (
     <div className="app-viewport flex flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       <ToastContainer />
@@ -294,23 +348,6 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
         )}
         <AuthControls />
       </header>
-
-      {activeTab === "trip" && shownTrip && (
-        <div aria-label="Live trip controls" className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-outline-variant bg-surface px-3 py-1">
-          <span className="min-w-0 truncate text-sm font-medium">Trip #{shownTrip.id}</span>
-          <DriverVoiceToggle
-            key={shownTrip.id}
-            tripId={shownTrip.id}
-            status={shownTrip.status}
-            active={activeTab === "trip"}
-            remainingKm={viewedTrip
-              ? viewedTrip.remaining_distance_meters != null ? viewedTrip.remaining_distance_meters / 1000 : null
-              : gpsMode ? roadRemainingKm : sim.simState !== "idle" ? sim.remainingKm : roadRemainingKm}
-            trafficMessage={viewedTrip ? null : trafficMsg}
-            gpsError={!viewedTrip && gpsMode ? gps.gpsError : null}
-          />
-        </div>
-      )}
 
       {/* Body */}
       <div className="flex flex-1 flex-col lg:flex-row min-h-0 overflow-hidden">
@@ -417,11 +454,12 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                   <span aria-hidden className="h-1 w-10 rounded-full bg-outline-variant" />
                   <span className="block w-full min-w-0 px-2">
                     <span className="block truncate text-sm font-medium text-on-surface">{summary}</span>
-                    {trafficMsg && (
-                      <span className="block truncate text-xs text-on-surface-variant">{trafficMsg}</span>
+                    {(summaryDetail ?? trafficMsg) && (
+                      <span className="block truncate text-xs text-on-surface-variant">{summaryDetail ?? trafficMsg}</span>
                     )}
                   </span>
                 </button>
+                {headerActionButton}
                 <button
                   type="button"
                   aria-label={sheet === "full" ? "Shrink panel" : "Expand panel"}
@@ -511,6 +549,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                       </section>
                     )}
                     <TripManagement
+                      actionRequest={actionRequest}
                       trip={viewedTrip ?? trip}
                       driverControls={!viewedTrip ? {
                         gpsState: gpsMode ? gps.gpsState : "idle",
@@ -600,6 +639,21 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                     <p><span className="mr-1 inline-block h-1 w-5 bg-primary" />Remaining</p>
                   </div>
                 )}
+                {activeTab === "trip" && shownTrip && (
+                  <div className="absolute right-3 top-[4.25rem] z-[1100]">
+                    <DriverVoiceToggle
+                      key={shownTrip.id}
+                      tripId={shownTrip.id}
+                      status={shownTrip.status}
+                      active={activeTab === "trip"}
+                      remainingKm={viewedTrip
+                        ? viewedTrip.remaining_distance_meters != null ? viewedTrip.remaining_distance_meters / 1000 : null
+                        : gpsMode ? roadRemainingKm : sim.simState !== "idle" ? sim.remainingKm : roadRemainingKm}
+                      trafficMessage={viewedTrip ? null : trafficMsg}
+                      gpsError={!viewedTrip && gpsMode ? gps.gpsError : null}
+                    />
+                  </div>
+                )}
                 {!viewedTrip && <MapOverlay
                   simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
                   progress={sim.progress}
@@ -609,25 +663,28 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                   currentSpeed={gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed}
                 />}
                 {sheet === "collapsed" && (
+                  <div className="absolute bottom-4 left-4 right-4 z-[1100] flex items-center gap-1 rounded-2xl border border-outline-variant bg-surface pr-1 shadow-lg lg:bottom-auto lg:left-auto lg:right-3 lg:top-3 lg:max-w-xs">
                   <button
                     type="button"
                     onClick={() => setSheet("half")}
                     aria-label="Show details"
-                    className="absolute bottom-4 left-4 right-4 z-[1100] flex min-h-12 items-center gap-3 rounded-2xl border border-outline-variant bg-surface px-4 text-left shadow-lg lg:bottom-auto lg:left-auto lg:right-3 lg:top-3 lg:max-w-xs"
+                    className="flex min-h-12 min-w-0 flex-1 items-center gap-3 pl-4 text-left"
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-primary">
                       <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
                     </svg>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-on-surface">{summary}</span>
-                      {trafficMsg && (
-                        <span className="block truncate text-xs text-on-surface-variant">{trafficMsg}</span>
+                      {(summaryDetail ?? trafficMsg) && (
+                        <span className="block truncate text-xs text-on-surface-variant">{summaryDetail ?? trafficMsg}</span>
                       )}
                     </span>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-on-surface-variant">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2 flex-shrink-0 text-on-surface-variant">
                       <path d="M6 15l6-6 6 6" />
                     </svg>
                   </button>
+                  {headerActionButton}
+                  </div>
                 )}
               </div>
 

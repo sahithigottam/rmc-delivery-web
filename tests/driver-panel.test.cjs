@@ -26,10 +26,22 @@ function panel(status, state = {}) {
         },
       };
       if (id === "@/lib/api") return {};
+      if (id === "@/lib/completionReasons") {
+        const reasons = { exports: {} };
+        vm.runInNewContext(ts.transpileModule(
+          fs.readFileSync(path.join(__dirname, "..", "src", "lib", "completionReasons.ts"), "utf8"),
+          { compilerOptions: { module: ts.ModuleKind.CommonJS } },
+        ).outputText, { module: reasons, exports: reasons.exports });
+        return reasons.exports;
+      }
+      if (id === "@/lib/nearSite") return {
+        isNearSite: (position) => Array.isArray(position) && position[0] === 1 && position[1] === 2,
+      };
       if (id === "./Toast") return { showToast() {} };
       if (id === "./TruckIcon") return { default: () => null };
       if (id === "@/lib/time") return {
         timeZoneForTrip: () => "Asia/Kolkata", formatInZone: () => "10:30 pm", zoneLabel: () => "IST",
+        isEtaStale: (iso) => Date.parse(iso) + 60_000 < Date.now(),
       };
       return require(id);
     },
@@ -39,7 +51,7 @@ function panel(status, state = {}) {
       id: 13, status, start_address: "Plant", end_address: "Destination",
       original_distance_meters: 40000, original_duration_seconds: 3600,
       remaining_distance_meters: 10000, remaining_duration_seconds: 1200,
-      estimated_arrival: "2026-10-11T17:00:00Z", load_minutes_remaining: 0,
+      estimated_arrival: new Date(Date.now() + 3_600_000).toISOString(), load_minutes_remaining: 0,
       load_max_life_minutes: 90, load_status: "expired",
       end_lat: 1, end_lng: 2, reroute_count: 0,
     },
@@ -64,6 +76,30 @@ test("driver panel shows current metrics, GPS and compact route addresses", () =
   assert.match(markup, /From: Plant/);
   assert.match(markup, /To: Destination/);
   assert.match(markup, /p-3 flex flex-col/);
+});
+
+test("a passed ETA is marked outdated instead of shown as an arrival time", () => {
+  const { Component, props } = panel("in_progress");
+  props.trip.estimated_arrival = new Date(Date.now() - 3_600_000).toISOString();
+  const markup = renderToStaticMarkup(React.createElement(Component, props));
+  assert.match(markup, />Outdated</);
+  assert.match(markup, /was 10:30 pm/);
+  assert.doesNotMatch(markup, /font-semibold text-on-surface">10:30 pm/);
+});
+
+test("End Trip is a quiet secondary button until the driver is near the site", () => {
+  const far = panel("in_progress");
+  const farMarkup = renderToStaticMarkup(React.createElement(far.Component, far.props));
+  assert.match(farMarkup, /border border-outline-variant font-medium text-on-surface-variant[^"]*"[^>]*>\s*End Trip/);
+  assert.doesNotMatch(farMarkup, /bg-md-green[^>]*>\s*End Trip/);
+  const near = panel("in_progress");
+  near.props.driverPosition = [1, 2];
+  const nearMarkup = renderToStaticMarkup(React.createElement(near.Component, near.props));
+  assert.match(nearMarkup, /bg-md-green text-white font-semibold[^>]*>\s*End Trip/);
+  const office = panel("in_progress");
+  delete office.props.driverControls;
+  const officeMarkup = renderToStaticMarkup(React.createElement(office.Component, office.props));
+  assert.match(officeMarkup, /bg-md-green text-white font-semibold[^>]*>\s*End Trip/);
 });
 
 test("stage actions match pending, tracking, paused and completed trips", () => {
@@ -99,6 +135,32 @@ test("end-trip flow retains required notes and disabled confirmation for failed 
     assert.match(markup, /<button disabled=""[^>]*>Confirm<\/button>/);
     assert.match(markup, /flagged for review/);
   }
+});
+
+test("end-trip form offers one-tap reasons where a note is required and keeps typing available", () => {
+  const failed = panel("in_progress", { 4: true, 5: false, 6: "" });
+  const failedMarkup = renderToStaticMarkup(React.createElement(failed.Component, failed.props));
+  for (const reason of ["Truck broke down", "Site refused load", "Site not ready", "Could not reach site"]) {
+    assert.match(failedMarkup, new RegExp(`aria-pressed="false"[^>]*>${reason}<`));
+  }
+  assert.match(failedMarkup, /role="group" aria-label="Quick reasons"/);
+  assert.match(failedMarkup, /<textarea/);
+  assert.match(failedMarkup, /<button disabled=""[^>]*>Confirm<\/button>/);
+
+  const chosen = panel("in_progress", { 4: true, 5: false, 6: "Truck broke down" });
+  const chosenMarkup = renderToStaticMarkup(React.createElement(chosen.Component, chosen.props));
+  assert.match(chosenMarkup, /aria-pressed="true"[^>]*>Truck broke down</);
+  assert.doesNotMatch(chosenMarkup, /<button disabled=""[^>]*>Confirm<\/button>/, "a chosen reason satisfies the required note");
+
+  const expired = panel("in_progress", { 4: true, 5: true, 6: "" });
+  const expiredMarkup = renderToStaticMarkup(React.createElement(expired.Component, expired.props));
+  assert.match(expiredMarkup, />Site engineer approved after slump test</);
+
+  const fresh = panel("in_progress", { 4: true, 5: true, 6: "" });
+  fresh.props.trip.load_minutes_remaining = 30;
+  fresh.props.trip.load_status = "fresh";
+  const freshMarkup = renderToStaticMarkup(React.createElement(fresh.Component, fresh.props));
+  assert.doesNotMatch(freshMarkup, /Quick reasons/);
 });
 
 test("turn-by-turn instructions are in a collapsed accordion and forms expand the sheet", () => {
@@ -145,15 +207,18 @@ test("mode switch reflects GPS selection and toggles in both directions", () => 
   }
 });
 
-test("sound stays outside the sheet and map for the currently displayed trip", () => {
+test("sound is one round map button for the displayed trip, not in the header or the sheet", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "components", "MainApp.tsx"), "utf8");
   assert.equal((source.match(/<DriverVoiceToggle\b/g) ?? []).length, 1);
-  assert.match(source, /activeTab === "trip" && shownTrip &&/);
-  const toolbarStart = source.indexOf('aria-label="Live trip controls"');
-  const soundStart = source.indexOf("<DriverVoiceToggle");
-  const bodyStart = source.indexOf("{/* Body */}");
-  assert.ok(toolbarStart < soundStart && soundStart < bodyStart);
-  const toolbar = source.slice(toolbarStart, bodyStart);
-  assert.match(toolbar, /key=\{shownTrip.id\}/);
-  assert.doesNotMatch(toolbar, /\bsheet\b|absolute|app-header/);
+  assert.doesNotMatch(source, /aria-label="Live trip controls"/, "the extra top row is gone");
+  const sound = source.indexOf("<DriverVoiceToggle");
+  assert.ok(sound > source.indexOf("<MapView"), "mounted over the map");
+  assert.ok(sound > source.indexOf("</aside>"), "outside the sheet, so it is never remounted by it");
+  assert.ok(sound < source.indexOf("</main>"));
+  const wrapper = source.slice(source.lastIndexOf("{activeTab", sound), sound + 400);
+  assert.match(wrapper, /activeTab === "trip" && shownTrip &&/, "also shown for trips opened from the list");
+  assert.match(wrapper, /absolute right-3 top-\[4\.25rem\] z-\[1100\]/);
+  assert.match(wrapper, /key=\{shownTrip.id\}/);
+  const header = source.slice(source.indexOf("<header"), source.indexOf("</header>"));
+  assert.doesNotMatch(header, /DriverVoiceToggle/);
 });

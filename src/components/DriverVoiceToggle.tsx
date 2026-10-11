@@ -29,7 +29,7 @@ export default function DriverVoiceToggle({
     utterance.onerror = (event) => {
       if (utteranceRef.current !== utterance || !enabledRef.current) return;
       console.error("Driver voice update failed:", event.error);
-      setError("Voice update failed. Tap Sound on to retry.");
+      setError("Voice update failed. Tap the sound button to retry.");
       enabledRef.current = false;
       setEnabled(false);
       stop();
@@ -42,7 +42,7 @@ export default function DriverVoiceToggle({
       window.speechSynthesis.speak(utterance);
     } catch (cause) {
       console.error("Could not start driver voice:", cause);
-      setError("Voice update failed. Tap Sound on to retry.");
+      setError("Voice update failed. Tap the sound button to retry.");
       enabledRef.current = false;
       setEnabled(false);
       stop();
@@ -76,9 +76,10 @@ export default function DriverVoiceToggle({
   }, [active, snapshot.tripId, snapshot.status, snapshot.remainingKm, snapshot.trafficMessage, snapshot.gpsError]);
 
   return (
-    <div className={`max-w-56 ${className}`}>
+    <div className={`flex flex-col items-end gap-2 ${className}`}>
       <button type="button" aria-pressed={enabled}
         aria-label={enabled ? "Mute driver voice updates" : "Enable driver voice updates"}
+        title={enabled ? "Sound on" : "Sound off"}
         disabled={!supported || !active}
         onClick={() => {
           const next = !enabledRef.current;
@@ -88,17 +89,16 @@ export default function DriverVoiceToggle({
           if (next) speak(updatesRef.current.reset(snapshot, Date.now()));
           else stop();
         }}
-        className={`flex min-h-12 items-center gap-2 whitespace-nowrap rounded-xl border border-outline-variant px-3 text-sm font-medium shadow-md disabled:opacity-50 ${
-          enabled ? "bg-primary text-on-primary hover:bg-primary/90" : "bg-surface text-on-surface hover:bg-surface-container"
+        className={`flex h-12 w-12 items-center justify-center rounded-full border shadow-md disabled:opacity-50 ${
+          enabled ? "border-primary bg-primary-container text-primary" : "border-outline-variant bg-surface text-on-surface-variant"
         }`}>
-        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M11 5L6 9H3v6h3l5 4V5z" />
           {enabled ? <path d="M15 8a6 6 0 010 8m3-11a10 10 0 010 14" /> : <path d="M16 9l5 6m0-6l-5 6" />}
         </svg>
-        {enabled ? "Sound on" : "Sound off"}
       </button>
-      {supported === false && <p role="status" className="mt-1 rounded-lg bg-surface p-2 text-xs">Voice updates are not supported by this browser.</p>}
-      {error && <p role="alert" className="mt-1 rounded-lg bg-surface p-2 text-xs text-error">{error}</p>}
+      {supported === false && <p role="status" className="max-w-56 rounded-lg bg-surface p-2 text-xs shadow-md">Voice updates are not supported by this browser.</p>}
+      {error && <p role="alert" className="max-w-56 rounded-lg bg-surface p-2 text-xs text-error shadow-md">{error}</p>}
     </div>
   );
 }
