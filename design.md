@@ -119,6 +119,11 @@ while the full sheet covers the map so lowering it restores usable bounds.
 - An estimated arrival that has already passed (after a one-minute grace) is
   shown as "ETA outdated", never as a time, because the backend only refreshes
   it on a successful traffic check. No replacement time is guessed.
+- A finished trip shows its result as a round mark and one line: green check
+  "Delivered", red cross "Delivery failed", or a neutral dash for cancelled or
+  unspecified. The review flag stays as its own amber note. The header and the
+  collapsed card show the same result with one action, Back to trips, which clears
+  the finished trip from Live Trip and opens the Trips list.
 - Only the Simulation/GPS switch sits above the active trip card. The rest of
   the tracking settings (status, freshness, speed, progress, start/stop) live
   under More details. Switching modes stops the previous mode; starting GPS

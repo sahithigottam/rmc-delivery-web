@@ -1,7 +1,7 @@
 /** Within this distance of the delivery site the driver is treated as arriving. */
 export const NEAR_SITE_M = 300;
 
-function distanceMeters(a: [number, number], b: [number, number]): number {
+export function distanceMeters(a: [number, number], b: [number, number]): number {
   const R = 6_371_000;
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(b[0] - a[0]);

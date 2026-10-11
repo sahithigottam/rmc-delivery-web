@@ -88,6 +88,41 @@ test("the collapsed card keeps its toggle and action as separate buttons below t
   assert.match(source, /const peek = activeTab === "trip" && !viewedTrip && trip \? peekDetails\(trip\) : null/);
 });
 
+test("stopping GPS asks first, from the button and from the switch, and leaving GPS on if declined", () => {
+  const main = fs.readFileSync(path.join(root, "src", "components", "MainApp.tsx"), "utf8");
+  assert.match(main, /confirm\("Stop GPS\? Your live location will no longer be shared\."\)/);
+  const confirmFn = main.slice(main.indexOf("const confirmStopGps"), main.indexOf("const tripPosition"));
+  assert.match(confirmFn, /gps\.gpsState === "active" \|\| gps\.gpsState === "requesting"/, "only asks while location is being shared");
+  assert.match(confirmFn, /return false;[\s\S]*stopGps\(\);\s*return true;/);
+  assert.match(main, /onGpsStop: \(\) => \{ confirmStopGps\(\); \}/);
+  assert.match(main, /if \(confirmStopGps\(\)\) setGpsMode\(false\);/, "the switch only leaves GPS mode once the stop is confirmed");
+  assert.doesNotMatch(main, /onGpsStop: stopGps/, "the button no longer stops GPS directly");
+  const plainStops = main.match(/\bstopGps\(\)/g) ?? [];
+  assert.equal(plainStops.length, 1, "stopGps is only called after the confirmation step");
+});
+
+test("a finished trip shows a clear result with a mark, and Back to trips leaves it", () => {
+  const { finishedSummary } = load("lib/liveTripSummary.ts");
+  assert.deepEqual({ ...finishedSummary({ status: "completed", outcome: "succeeded" }) }, { title: "Delivered", tone: "ok" });
+  assert.deepEqual({ ...finishedSummary({ status: "completed", outcome: "failed" }) }, { title: "Delivery failed", tone: "bad" });
+  assert.deepEqual({ ...finishedSummary({ status: "completed" }) }, { title: "Trip completed", tone: "neutral" });
+  assert.deepEqual({ ...finishedSummary({ status: "cancelled" }) }, { title: "Trip cancelled", tone: "neutral" });
+  for (const status of ["pending", "in_progress", "paused"]) {
+    assert.equal(finishedSummary({ status, outcome: "succeeded" }), null, `${status} is not finished`);
+  }
+  const main = fs.readFileSync(path.join(root, "src", "components", "MainApp.tsx"), "utf8");
+  assert.match(main, /summary = finished\.title;\s*summaryDetail = `Trip #\$\{trip\.id\}`/);
+  const done = main.slice(main.indexOf('if (type === "done")'));
+  assert.match(done.slice(0, 260), /setTrip\(null\);\s*setRoute\(null\);\s*selectTab\("trips"\)/);
+});
+
+test("the delivery result block replaces the old text badge and keeps the review flag", () => {
+  const source = fs.readFileSync(path.join(root, "src", "components", "TripManagement.tsx"), "utf8");
+  assert.doesNotMatch(source, /Delivered successfully/);
+  assert.match(source, /\{finished && \(/);
+  assert.match(source, /Flagged for review/);
+});
+
 test("next action follows trip stage and whether device GPS is running", () => {
   assert.deepEqual({ ...nextTripAction("pending", false) }, { type: "begin", label: "Start Trip" });
   assert.deepEqual({ ...nextTripAction("paused", false) }, { type: "resume", label: "Resume" });
@@ -96,8 +131,8 @@ test("next action follows trip stage and whether device GPS is running", () => {
   assert.equal(nextTripAction("in_progress", true), null, "End Trip waits until the driver is near the site");
   assert.equal(nextTripAction("in_progress", true, false), null);
   assert.deepEqual({ ...nextTripAction("in_progress", true, true) }, { type: "end", label: "End Trip" });
-  assert.equal(nextTripAction("completed", true), null);
-  assert.equal(nextTripAction("cancelled", false), null);
+  assert.deepEqual({ ...nextTripAction("completed", true) }, { type: "done", label: "Back to trips" });
+  assert.deepEqual({ ...nextTripAction("cancelled", false) }, { type: "done", label: "Back to trips" });
 });
 
 test("summary shows distance, arrival and stage, and never claims a stage it lacks", () => {
@@ -194,6 +229,7 @@ function tripPanel() {
     "./TruckIcon": { default: () => null },
     "@/lib/nearSite": { isNearSite: () => false },
     "@/lib/completionReasons": load("lib/completionReasons.ts"),
+    "@/lib/liveTripSummary": load("lib/liveTripSummary.ts"),
     "@/lib/time": {
       timeZoneForTrip: () => "Asia/Kolkata", formatInZone: () => "6:30 pm",
       zoneLabel: () => "IST", zonedInputToUtcIso: () => "", isEtaStale: () => false,

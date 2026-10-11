@@ -1,6 +1,6 @@
 import type { TripStatus } from "@/types/route";
 
-export type TripActionType = "begin" | "resume" | "start-gps" | "end";
+export type TripActionType = "begin" | "resume" | "start-gps" | "end" | "done";
 
 export interface TripActionRequest {
   type: TripActionType;
@@ -32,7 +32,23 @@ export function nextTripAction(
     // End Trip stays out of the way until the driver is near the site
     return nearSite ? { type: "end", label: "End Trip" } : null;
   }
+  // Finished: the only thing left to do is leave the trip
+  if (status === "completed" || status === "cancelled") return { type: "done", label: "Back to trips" };
   return null;
+}
+
+export type FinishedTone = "ok" | "bad" | "neutral";
+
+/** The one-line result shown when a trip has ended. Null while it is still running. */
+export function finishedSummary(trip: {
+  status: TripStatus;
+  outcome?: string | null;
+}): { title: string; tone: FinishedTone } | null {
+  if (trip.status === "cancelled") return { title: "Trip cancelled", tone: "neutral" };
+  if (trip.status !== "completed") return null;
+  if (trip.outcome === "succeeded") return { title: "Delivered", tone: "ok" };
+  if (trip.outcome) return { title: "Delivery failed", tone: "bad" };
+  return { title: "Trip completed", tone: "neutral" };
 }
 
 /** Two lines: the numbers a driver needs, then the trip stage with any problem note. */

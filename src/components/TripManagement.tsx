@@ -6,6 +6,7 @@ import { beginTrip, pauseTrip, resumeTrip, completeTrip, cancelTrip } from "@/li
 import { showToast } from "./Toast";
 import TruckIcon from "./TruckIcon";
 import type { TripActionRequest } from "@/lib/liveTripSummary";
+import { finishedSummary } from "@/lib/liveTripSummary";
 import { applyReasonChip, reasonChips } from "@/lib/completionReasons";
 import { formatInZone, isEtaStale, timeZoneForTrip, zoneLabel, zonedInputToUtcIso } from "@/lib/time";
 
@@ -50,6 +51,12 @@ const STATUS_CONFIG: Record<TripStatus, { label: string; dot: string; icon: stri
   paused:      { label: "Paused",      dot: "bg-md-yellow",   icon: "" },
   completed:   { label: "Completed",   dot: "bg-blue-500",    icon: "" },
   cancelled:   { label: "Cancelled",   dot: "bg-md-red",      icon: ""  },
+};
+
+const FINISHED_STYLE = {
+  ok: { box: "bg-emerald-50 text-emerald-800", circle: "bg-md-green", mark: "M5 13l4 4L19 7" },
+  bad: { box: "bg-red-50 text-red-800", circle: "bg-error", mark: "M6 6l12 12M18 6L6 18" },
+  neutral: { box: "bg-surface-container-low text-on-surface", circle: "bg-outline", mark: "M6 12h12" },
 };
 
 const LOAD_STATUS_STYLE: Record<string, string> = {
@@ -139,6 +146,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
   const cfg = STATUS_CONFIG[trip.status];
   const isActive = trip.status === "in_progress" || trip.status === "paused";
   const isDone = trip.status === "completed" || trip.status === "cancelled";
+  const finished = finishedSummary(trip);
   const siteTz = timeZoneForTrip(trip);
 
   // Completing away from the job site is allowed, but the driver is warned
@@ -364,10 +372,15 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
           </div>
         )}
 
-        {/* Outcome badge (completed/cancelled) */}
-        {isDone && trip.outcome && (
-          <div className={`px-3 py-2 rounded-lg text-sm font-medium ${trip.outcome === "succeeded" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
-            {trip.outcome === "succeeded" ? " Delivered successfully" : " Delivery failed"}
+        {/* Result of a finished trip */}
+        {finished && (
+          <div role="status" className={`flex items-center gap-3 rounded-xl px-3 py-3 ${FINISHED_STYLE[finished.tone].box}`}>
+            <span aria-hidden="true" className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-white ${FINISHED_STYLE[finished.tone].circle}`}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d={FINISHED_STYLE[finished.tone].mark} />
+              </svg>
+            </span>
+            <p className="text-sm font-semibold">{finished.title}</p>
           </div>
         )}
         {isDone && trip.completion_review_required && (

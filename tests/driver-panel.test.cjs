@@ -26,6 +26,14 @@ function panel(status, state = {}) {
         },
       };
       if (id === "@/lib/api") return {};
+      if (id === "@/lib/liveTripSummary") {
+        const summary = { exports: {} };
+        vm.runInNewContext(ts.transpileModule(
+          fs.readFileSync(path.join(__dirname, "..", "src", "lib", "liveTripSummary.ts"), "utf8"),
+          { compilerOptions: { module: ts.ModuleKind.CommonJS } },
+        ).outputText, { module: summary, exports: summary.exports });
+        return summary.exports;
+      }
       if (id === "@/lib/completionReasons") {
         const reasons = { exports: {} };
         vm.runInNewContext(ts.transpileModule(
@@ -76,6 +84,36 @@ test("driver panel shows current metrics, GPS and compact route addresses", () =
   assert.match(markup, /From: Plant/);
   assert.match(markup, /To: Destination/);
   assert.match(markup, /p-3 flex flex-col/);
+});
+
+test("a finished trip shows its result with a mark, plus the review flag when there is one", () => {
+  const cases = [
+    ["completed", "succeeded", "Delivered", "bg-md-green", "M5 13l4 4L19 7"],
+    ["completed", "failed", "Delivery failed", "bg-error", "M6 6l12 12M18 6L6 18"],
+    ["cancelled", undefined, "Trip cancelled", "bg-outline", "M6 12h12"],
+  ];
+  for (const [status, outcome, title, circle, mark] of cases) {
+    const view = panel(status);
+    view.props.trip.outcome = outcome;
+    const markup = renderToStaticMarkup(React.createElement(view.Component, view.props));
+    assert.match(markup, new RegExp(`>${title}</p>`));
+    assert.match(markup, new RegExp(`rounded-full text-white ${circle}`));
+    assert.ok(markup.includes(`d="${mark}"`));
+    assert.doesNotMatch(markup, /Delivered successfully/);
+    assert.doesNotMatch(markup, />Start GPS<|>End Trip<|>Pause<|>Resume<|>Cancel trip</, "no live actions on a finished trip");
+  }
+  const flagged = panel("completed");
+  Object.assign(flagged.props.trip, {
+    outcome: "succeeded", completion_review_required: true,
+    completion_review_reason: "completed away from the site", completion_distance_meters: 450,
+  });
+  const flaggedMarkup = renderToStaticMarkup(React.createElement(flagged.Component, flagged.props));
+  assert.match(flaggedMarkup, />Delivered</);
+  assert.match(flaggedMarkup, /Flagged for review: completed away from the site/);
+  assert.match(flaggedMarkup, /450 m from site/);
+  const running = panel("in_progress");
+  const runningMarkup = renderToStaticMarkup(React.createElement(running.Component, running.props));
+  assert.doesNotMatch(runningMarkup, /rounded-full text-white/);
 });
 
 test("a passed ETA is marked outdated instead of shown as an arrival time", () => {

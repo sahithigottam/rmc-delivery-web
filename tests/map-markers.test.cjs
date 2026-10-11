@@ -6,6 +6,15 @@ const vm = require("node:vm");
 const ts = require("typescript");
 const React = require("react");
 
+function realLib(file) {
+  const loaded = { exports: {} };
+  vm.runInNewContext(ts.transpileModule(
+    fs.readFileSync(path.join(__dirname, "..", "src", "lib", file), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS } },
+  ).outputText, { module: loaded, exports: loaded.exports });
+  return loaded.exports;
+}
+
 test("map endpoints use local illustrated markers with coordinate tips and address popups", () => {
   const filename = path.join(__dirname, "..", "src", "components", "MapView.tsx");
   const source = fs.readFileSync(filename, "utf8");
@@ -87,6 +96,7 @@ test("map endpoints use local illustrated markers with coordinate tips and addre
       require(id) {
         if (id === "leaflet") return { default: leaflet };
         if (id.endsWith(".css")) return {};
+        if (id === "@/lib/nearSite") return realLib("nearSite.ts");
         if (id === "@/lib/polyline") return {
           decodePolyline: () => [[1, 2], [3, 4]], remainingRoute: (points) => ({ points }),
         };
@@ -178,6 +188,7 @@ test("map endpoints use local illustrated markers with coordinate tips and addre
         useCallback: (callback) => callback,
         useMemo: (callback) => callback(),
       };
+      if (id === "@/lib/nearSite") return realLib("nearSite.ts");
       if (id === "@/lib/polyline") return {
         decodePolyline: () => [[1, 2], [3, 4]],
         remainingRoute: (points) => ({ points, distanceKm: 1 }),
@@ -254,4 +265,40 @@ test("map endpoints use local illustrated markers with coordinate tips and addre
   const beforeManualResize = views.length;
   resize();
   assert.equal(views.length, beforeManualResize);
+
+  // Close to the site the map fits the driver and the site together, never zooming past 17
+  const site = { id: 5, polyline: "test", start_lat: 1, start_lng: 2, end_lat: 3, end_lng: 4,
+    resolved_start_address: "Batching plant", resolved_end_address: "Job site" };
+  const render = (truckPosition, followDriver = true) => {
+    refIndex = 0;
+    return module.exports.default({
+      route: site, simState: "running", truckPosition, animationPoints: [], currentPointIndex: 0,
+      bottomInsetRatio: 0.55, followDriver,
+    });
+  };
+  const fitsBeforeNear = fits.length;
+  const viewsBeforeNear = views.length;
+  render([3.0089, 4]); // about 990 m from the site
+  assert.ok(fits.length > fitsBeforeNear, "fits both points when within 1 km");
+  assert.equal(fits.at(-1).options.maxZoom, 17);
+  assert.ok(fits.at(-1).points.some((point) => point[0] === 3.0089 && point[1] === 4));
+  assert.ok(fits.at(-1).points.some((point) => point[0] === 3 && point[1] === 4));
+  assert.equal(views.length, viewsBeforeNear, "no fixed close-up while the site is near");
+  const fitsBeforeFar = fits.length;
+  render([3.0091, 4]); // about 1,010 m away
+  assert.equal(views.at(-1).zoom, 17, "beyond 1 km it follows the driver at the close-up zoom");
+  assert.equal(fits.length, fitsBeforeFar);
+
+  // The locate button returns to the driver at once, and only shows while following
+  assert.equal(render([3.5, 4], false).props.children[1], false);
+  assert.equal(render(null, true).props.children[1], null);
+  const tree = render([3.5, 4]);
+  const locate = tree.props.children[1];
+  assert.equal(locate.type, "button");
+  assert.equal(locate.props["aria-label"], "Re-centre on the driver");
+  events.movestart(); // the driver explores the map, which pauses following
+  const viewsBeforeTap = views.length;
+  locate.props.onClick();
+  assert.equal(views.length, viewsBeforeTap + 1);
+  assert.equal(views.at(-1).zoom, 17);
 });

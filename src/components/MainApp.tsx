@@ -8,7 +8,7 @@ import { useSimulation } from "@/hooks/useSimulation";
 import { useGpsTracking } from "@/hooks/useGpsTracking";
 import { useTripStream } from "@/hooks/useTripStream";
 import { decodePolyline, remainingRoute } from "@/lib/polyline";
-import { liveTripSummary, nextTripAction, peekDetails, displayAddress, tripStatusLabel, type TripActionRequest, type TripActionType } from "@/lib/liveTripSummary";
+import { liveTripSummary, nextTripAction, peekDetails, displayAddress, finishedSummary, tripStatusLabel, type TripActionRequest, type TripActionType } from "@/lib/liveTripSummary";
 import { isNearSite } from "@/lib/nearSite";
 import DriverVoiceToggle from "@/components/DriverVoiceToggle";
 import HeaderTrackingStatus from "@/components/HeaderTrackingStatus";
@@ -186,6 +186,14 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
     localStorage.removeItem(GPS_TRIP_KEY);
     gps.stop();
   };
+  // Stopping GPS mid-trip means the office stops seeing the truck, so ask first.
+  // Nothing is shared when GPS is not running, so that needs no question.
+  const confirmStopGps = (): boolean => {
+    const sharing = gps.gpsState === "active" || gps.gpsState === "requesting";
+    if (sharing && !confirm("Stop GPS? Your live location will no longer be shared.")) return false;
+    stopGps();
+    return true;
+  };
 
   const tripPosition: [number, number] | null =
     trip?.current_lat != null && trip.current_lng != null
@@ -308,6 +316,11 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
     });
     summary = live.primary;
     summaryDetail = live.secondary;
+    const finished = finishedSummary(trip);
+    if (finished) {
+      summary = finished.title;
+      summaryDetail = `Trip #${trip.id}`;
+    }
     headerAction = nextTripAction(trip.status, gpsRunning, isNearSite(activeTruckPosition, trip));
   } else if (activeTab === "trip" && viewedTrip) {
     // A trip opened from the list shows its own stage, never the live trip's GPS state
@@ -318,6 +331,13 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   const requestTripAction = (type: TripActionType) => {
     if (type === "start-gps") {
       startDriverGps();
+      return;
+    }
+    if (type === "done") {
+      // Leave a finished trip: clear it so Live Trip is empty, and show the trips list
+      setTrip(null);
+      setRoute(null);
+      selectTab("trips");
       return;
     }
     actionRequestCount.current += 1;
@@ -347,9 +367,12 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
     onStop: sim.stop,
     gpsMode,
     onGpsModeChange: (on: boolean) => {
-      setGpsMode(on);
-      if (on) sim.stop();
-      else stopGps();
+      if (on) {
+        setGpsMode(true);
+        sim.stop();
+        return;
+      }
+      if (confirmStopGps()) setGpsMode(false);
     },
     gpsState: gps.gpsState,
     gpsAccuracy: gps.gpsAccuracy,
@@ -362,7 +385,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
     gpsWakeLockActive: gps.wakeLockActive,
     gpsTrafficMsg: tripTrafficMsg,
     onGpsStart: startGps,
-    onGpsStop: stopGps,
+    onGpsStop: () => { confirmStopGps(); },
   };
 
   return (

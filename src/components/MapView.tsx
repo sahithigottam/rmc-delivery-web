@@ -4,7 +4,11 @@ import { useEffect, useRef, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { decodePolyline, remainingRoute } from "@/lib/polyline";
+import { distanceMeters } from "@/lib/nearSite";
 import type { RouteResponse, SimState } from "@/types/route";
+
+/** Within this distance of the site the map fits the driver and the site together. */
+const FIT_SITE_WITHIN_M = 1000;
 
 /* ── Fix Leaflet default icon paths in Next.js ── */
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)
@@ -72,21 +76,6 @@ export default function MapView({
     return truckPosition ? remainingRoute(points, truckPosition)?.points ?? points : points;
   }, [animationPoints, currentPointIndex, remainingPolyline, fullPoints, truckPosition]);
 
-  const followPosition = useCallback(() => {
-    const map = mapRef.current;
-    const position = positionRef.current;
-    if (!map || !position || manualViewRef.current ||
-        (!window.matchMedia("(min-width: 64rem)").matches && insetRef.current >= 0.8)) return;
-    const mobile = !window.matchMedia("(min-width: 64rem)").matches;
-    const point = map.project(position, 17);
-    // Keep the driver above the mobile sheet or desktop status overlay.
-    const offset = mobile ? map.getSize().y * insetRef.current / 2 : Math.min(60, map.getSize().y / 4);
-    const center = map.unproject(L.point(point.x, point.y + offset), 17);
-    programmaticViewRef.current = true;
-    map.setView(center, 17, { animate: false });
-    programmaticViewRef.current = false;
-  }, []);
-
   const fitLocations = useCallback((points: L.LatLngTuple[], maxZoom: number) => {
     const map = mapRef.current;
     if (!map || !points.length) return;
@@ -102,6 +91,33 @@ export default function MapView({
     });
     programmaticViewRef.current = false;
   }, []);
+
+  const followPosition = useCallback(() => {
+    const map = mapRef.current;
+    const position = positionRef.current;
+    if (!map || !position || manualViewRef.current ||
+        (!window.matchMedia("(min-width: 64rem)").matches && insetRef.current >= 0.8)) return;
+    // Close to the site, show the driver and the site together instead of a fixed close-up
+    const site = routeRef.current;
+    if (site && distanceMeters(position, [site.end_lat, site.end_lng]) <= FIT_SITE_WITHIN_M) {
+      fitLocations([position, [site.end_lat, site.end_lng]], 17);
+      return;
+    }
+    const mobile = !window.matchMedia("(min-width: 64rem)").matches;
+    const point = map.project(position, 17);
+    // Keep the driver above the mobile sheet or desktop status overlay.
+    const offset = mobile ? map.getSize().y * insetRef.current / 2 : Math.min(60, map.getSize().y / 4);
+    const center = map.unproject(L.point(point.x, point.y + offset), 17);
+    programmaticViewRef.current = true;
+    map.setView(center, 17, { animate: false });
+    programmaticViewRef.current = false;
+  }, [fitLocations]);
+
+  const recentre = useCallback(() => {
+    clearResumeTimer();
+    manualViewRef.current = false;
+    followPosition();
+  }, [clearResumeTimer, followPosition]);
 
   const fitRoute = useCallback(() => {
     if (followRef.current && positionRef.current) {
@@ -318,6 +334,23 @@ export default function MapView({
   // This is handled by the parent passing new animationPoints
 
   return (
-    <div ref={containerRef} className="w-full h-full" style={{ minHeight: "100%" }} />
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="w-full h-full" style={{ minHeight: "100%" }} />
+      {followDriver && truckPosition && (
+        <button
+          type="button"
+          onClick={recentre}
+          aria-label="Re-centre on the driver"
+          title="Re-centre"
+          className="absolute right-3 top-32 z-[1100] flex h-12 w-12 items-center justify-center rounded-full border border-outline-variant bg-surface text-primary shadow-md"
+        >
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="3" />
+            <circle cx="12" cy="12" r="7" />
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
