@@ -1,27 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getAllTrips, cancelTrip, deleteTrip, getPlants } from "@/lib/api";
-import type { TripResponse, TripStatus, PlantOut } from "@/types/route";
+import { getAllTrips, cancelTrip, deleteTrip, getPlants, getBrands } from "@/lib/api";
+import type { TripResponse, TripStatus, PlantOut, Brand } from "@/types/route";
 import TripStatusBadge from "@/components/TripStatusBadge";
 import { showToast } from "@/components/Toast";
+import { dateInZone, formatInZone, parseApiTime, timeZoneForTrip } from "@/lib/time";
 
 const ACTIVE_STATUSES: TripStatus[] = ["pending", "in_progress", "paused"];
 
-function formatNZT(iso: string) {
-  return new Date(iso).toLocaleString("en-NZ", {
-    timeZone: "Pacific/Auckland",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function formatSiteTime(trip: TripResponse, iso: string) {
+  return formatInZone(iso, timeZoneForTrip(trip), "datetime");
 }
 
 export default function TripsListPanel({
   onViewTrip,
+  organizationId,
 }: {
   onViewTrip?: (trip: TripResponse) => void;
+  organizationId: string | null;
 }) {
   const [trips, setTrips] = useState<TripResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,15 +31,17 @@ export default function TripsListPanel({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [plants, setPlants] = useState<PlantOut[]>([]);
+  const [brandList, setBrandList] = useState<Brand[]>([]);
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
-  // Load plants for brand/plant filter labels
+  // Load plants (including inactive ones, for history) and brand names for filter labels
   useEffect(() => {
     getPlants().then(setPlants).catch(() => {});
+    getBrands().then(setBrandList).catch(() => {});
   }, []);
 
-  const SS_KEY = "rmc_trip_history";
+  const SS_KEY = `rmc_trip_history:${organizationId}`;
 
   function readHistory(): TripResponse[] {
     try { return JSON.parse(sessionStorage.getItem(SS_KEY) ?? "[]"); } catch { return []; }
@@ -55,10 +54,13 @@ export default function TripsListPanel({
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const active = await getAllTrips();
+      const active = await getAllTrips(1000);
       const historical = readHistory();
       const activeIds = new Set(active.map((t) => t.id));
-      setTrips([...active, ...historical.filter((t) => !activeIds.has(t.id))]);
+      setTrips(
+        [...active, ...historical.filter((t) => !activeIds.has(t.id))]
+          .sort((a, b) => b.id - a.id)
+      );
     } catch {
       showToast("Failed to load trips", "error");
     } finally {
@@ -103,10 +105,11 @@ export default function TripsListPanel({
   // Derive brand/plant options from plants data (only those seen in trips)
   const plantMap = Object.fromEntries(plants.map((p) => [p.id, p]));
   const brands = Array.from(new Set(
-    trips.map((t) => t.plant_id ? plantMap[t.plant_id]?.brand : undefined).filter(Boolean)
+    trips.map((t) => t.plant_id ? plantMap[t.plant_id]?.brand_id : undefined).filter(Boolean)
   )).sort() as string[];
+  const brandName = (id: string) => brandList.find((b) => b.id === id)?.name ?? id;
   const plantsForBrand = plants.filter(
-    (p) => brandFilter === "all" || p.brand === brandFilter
+    (p) => brandFilter === "all" || p.brand_id === brandFilter
   ).filter((p) => trips.some((t) => t.plant_id === p.id));
 
   function exportCSV() {
@@ -115,8 +118,11 @@ export default function TripsListPanel({
       const s = String(v);
       return s.includes(",") || s.includes("\"") || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const fmtDate = (iso?: string | null) =>
-      iso ? new Date(iso).toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) : "";
+    const actualDuration = (t: TripResponse) => {
+      const s = parseApiTime(t.started_at);
+      const c = parseApiTime(t.completed_at);
+      return s && c ? ((c.getTime() - s.getTime()) / 60000).toFixed(1) : "";
+    };
     const durMin = (secs?: number | null) =>
       secs != null ? (secs / 60).toFixed(1) : "";
     const distKm = (m?: number | null) =>
@@ -127,29 +133,29 @@ export default function TripsListPanel({
       "Mix", "Mix Code", "Grade", "Volume m³",
       "Brand", "Plant",
       "From (full)", "To (full)",
-      "Scheduled At (NZT)", "Started At (NZT)", "Completed At (NZT)",
+      "Time Zone",
+      "Scheduled At (site time)", "Started At (site time)", "Completed At (site time)",
       "Duration (min)",
       "Original Distance (km)", "Original Duration (min)",
       "Traffic Delay (s)",
-      "Reroute Count", "Last Rerouted At (NZT)",
-      "Load Status", "Load Remaining (min)", "Batch Time (NZT)", "Load Expiry (NZT)",
+      "Reroute Count", "Last Rerouted At (site time)",
+      "Load Status", "Load Remaining (min)", "Batch Time (site time)", "Load Expiry (site time)",
       "Vehicle ID", "Priority",
-      "Created At (NZT)",
+      "Created At (site time)",
     ];
 
     const rows = visible.map((t) => {
-      const actualDuration =
-        t.started_at && t.completed_at
-          ? ((new Date(t.completed_at).getTime() - new Date(t.started_at).getTime()) / 60000).toFixed(1)
-          : "";
+      const tz = timeZoneForTrip(t);
+      const fmtDate = (iso?: string | null) => formatInZone(iso, tz, "full", false);
       const plant = t.plant_id ? plantMap[t.plant_id] : undefined;
       return [
         esc(t.id), esc(t.status), esc(t.outcome),
         esc(t.concrete_mix), esc(t.mix_code), esc(t.concrete_grade), esc(t.volume_m3),
-        esc(plant?.brand ?? ""), esc(plant?.name ?? t.plant_id ?? ""),
+        esc(plant ? brandName(plant.brand_id) : ""), esc(plant?.name ?? t.plant_id ?? ""),
         esc(t.start_address), esc(t.end_address),
+        esc(tz),
         esc(fmtDate(t.scheduled_at)), esc(fmtDate(t.started_at)), esc(fmtDate(t.completed_at)),
-        esc(actualDuration),
+        esc(actualDuration(t)),
         esc(distKm(t.original_distance_meters)), esc(durMin(t.original_duration_seconds)),
         esc(t.current_traffic_delay),
         esc(t.reroute_count), esc(fmtDate(t.last_reroute_at)),
@@ -178,18 +184,17 @@ export default function TripsListPanel({
     if (statusFilter === "cancelled" && t.status !== "cancelled") return false;
     if (mixFilter !== "all" && t.concrete_mix !== mixFilter) return false;
     if (brandFilter !== "all") {
-      const tripBrand = t.plant_id ? plantMap[t.plant_id]?.brand : undefined;
+      const tripBrand = t.plant_id ? plantMap[t.plant_id]?.brand_id : undefined;
       if (tripBrand !== brandFilter) return false;
     }
     if (plantFilter !== "all" && t.plant_id !== plantFilter) return false;
     if (dateFrom) {
       const ref = t.scheduled_at ?? t.created_at;
-      if (!ref || ref < dateFrom) return false;
+      if (!ref || dateInZone(ref, timeZoneForTrip(t)) < dateFrom) return false;
     }
     if (dateTo) {
       const ref = t.scheduled_at ?? t.created_at;
-      const toEnd = dateTo + "T23:59:59";
-      if (!ref || ref > toEnd) return false;
+      if (!ref || dateInZone(ref, timeZoneForTrip(t)) > dateTo) return false;
     }
     return true;
   });
@@ -307,7 +312,7 @@ export default function TripsListPanel({
           <select value={brandFilter} onChange={(e) => { setBrandFilter(e.target.value); setPlantFilter("all"); }}
             className="px-3 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary">
             <option value="all">All brands</option>
-            {brands.map((b) => <option key={b} value={b}>{b}</option>)}
+            {brands.map((b) => <option key={b} value={b}>{brandName(b)}</option>)}
           </select>
         )}
         {plantsForBrand.length > 0 && (
@@ -366,7 +371,7 @@ export default function TripsListPanel({
                 {trip.start_address.split(",")[0]} → {trip.end_address.split(",")[0]}
               </p>
               <p className="text-xs text-on-surface-variant">
-                {trip.scheduled_at ? formatNZT(trip.scheduled_at) : "Not scheduled"}
+                {trip.scheduled_at ? formatSiteTime(trip, trip.scheduled_at) : "Not scheduled"}
                 {trip.original_distance_meters != null && ` · ${(trip.original_distance_meters / 1000).toFixed(1)} km`}
               </p>
               {renderActions(trip)}
@@ -413,7 +418,7 @@ export default function TripsListPanel({
                       {trip.end_address.split(",")[0]}
                     </td>
                     <td className="px-4 py-3 text-on-surface-variant hidden lg:table-cell text-xs whitespace-nowrap">
-                      {trip.scheduled_at ? formatNZT(trip.scheduled_at) : "—"}
+                      {trip.scheduled_at ? formatSiteTime(trip, trip.scheduled_at) : "—"}
                     </td>
                     <td className="px-4 py-3">
                       {renderActions(trip)}

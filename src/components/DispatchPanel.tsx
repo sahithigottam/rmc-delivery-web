@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getBrands, getPlants, analyseBrand, dispatchTrip } from "@/lib/api";
+import { getBrands, getPlants, getRegions, analyseBrand, dispatchTrip } from "@/lib/api";
 import type {
+  Brand,
   PlantOut,
   PlantPredictionResult,
+  Region,
   BrandAnalysisResponse,
   DispatchResponse,
 } from "@/types/route";
 import { showToast } from "./Toast";
 import AddressAutocomplete from "./AddressAutocomplete";
-import type { Suggestion } from "./AddressAutocomplete";
+import type { SearchCountry, Suggestion } from "./AddressAutocomplete";
+import { formatInZone, nowInZoneInput, timeZoneForCountry, zoneLabel, zonedInputToUtcIso } from "@/lib/time";
 
 /*  Types  */
 type Step = 1 | 3;   // Step 2 (analysis results) is now inline in Step 1
@@ -33,6 +36,40 @@ const RISK_STYLE: Record<string, string> = {
 };
 
 /*  Sub-components  */
+function PlantWarnings({ result }: { result: PlantPredictionResult }) {
+  // Only trust the explicit backend flag; a missing flag means "unknown", never "available"
+  const recommendation = result.recommendation?.trim();
+  return (
+    <>
+      {result.weather_available === false ? (
+        <p role="status" className="mt-1 text-xs rounded-lg px-2 py-1.5 bg-amber-50 text-amber-800">
+          ⚠ Weather unavailable—check conditions before dispatch.
+          {result.weather_error ? <span className="block opacity-80">{result.weather_error}</span> : null}
+        </p>
+      ) : result.weather_available !== true ? (
+        <p className="mt-1 text-[11px] text-on-surface-variant">
+          Weather status unknown—check conditions before dispatch.
+        </p>
+      ) : null}
+      {recommendation && (
+        <p className="mt-1 text-xs text-on-surface">
+          <span className="font-semibold">Recommendation:</span> {recommendation}
+        </p>
+      )}
+    </>
+  );
+}
+
+function UncalibratedBadge({ status }: { status?: string }) {
+  if (!status || status === "calibrated") return null;
+  return (
+    <span title="Not yet validated against delivery data for this region"
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border border-outline-variant text-on-surface-variant bg-surface">
+      Uncalibrated estimate
+    </span>
+  );
+}
+
 function RiskBadge({ level }: { level?: string }) {
   if (!level) return null;
   const cls = RISK_STYLE[level.toLowerCase()] ?? "bg-gray-100 text-gray-600 border-gray-200";
@@ -103,13 +140,20 @@ export interface DispatchPanelProps {
 
 export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   const [step, setStep] = useState<Step>(1);
-  const [brands, setBrands] = useState<string[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [regions, setRegions] = useState<Region[]>([]);
   const [loadingBrands, setLoadingBrands] = useState(true);
   const [loading, setLoading] = useState(false);
 
   // Step 1 state
-  const [brand, setBrand] = useState("");
+  const [brand, setBrand] = useState("");  // brand id
   const [mix, setMix] = useState<Mix>("GP");
+  const [country, setCountry] = useState<SearchCountry>("nz");
+  const [regionId, setRegionId] = useState("");
+  const countryCode = country === "in" ? "IN" : "NZ";
+  const countryRegions = regions.filter((r) => r.country_code === countryCode && r.active !== false);
+  const region = regions.find((r) => r.id === regionId);
+  const siteTz = region?.timezone ?? timeZoneForCountry(country);
   const [jobSite, setJobSite] = useState("");
   const [jobSiteData, setJobSiteData] = useState<Suggestion | null>(null);
   const [brandPlants, setBrandPlants] = useState<PlantOut[]>([]);
@@ -131,38 +175,42 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   // Success state
   const [dispatched, setDispatched] = useState<DispatchResponse | null>(null);
 
-  // Load brands on mount
+  // Load brands and regions on mount
   useEffect(() => {
     getBrands()
-      .then(setBrands)
-      .catch(() => {})
+      .then((b) => setBrands(b.filter((x) => x.active !== false)))
+      .catch((e: unknown) => showToast(e instanceof Error ? e.message : "Could not load brands", "error"))
       .finally(() => setLoadingBrands(false));
+    getRegions().then(setRegions).catch((e: unknown) => showToast(e instanceof Error ? e.message : "Could not load regions", "error"));
   }, []);
 
-  // Load plants for selected brand (instant, no Google API)
+  // Active plants for the selected brand/region that support the chosen mix (no Google API)
   useEffect(() => {
     if (!brand) { setBrandPlants([]); setAnalysis(null); return; }
     setLoadingPlants(true);
     setSelectedPlantId(null);
-    getPlants(brand)
-      .then(setBrandPlants)
-      .catch(() => setBrandPlants([]))
-      .finally(() => setLoadingPlants(false));
+    let cancelled = false;
+    getPlants({ brandId: brand, regionId: regionId || undefined, countryCode, activeOnly: true })
+      .then((ps) => { if (!cancelled) setBrandPlants(ps.filter((p) => p.supported_mix_codes.includes(mix))); })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setBrandPlants([]);
+          showToast(e instanceof Error ? e.message : "Could not load plants", "error");
+        }
+      })
+      .finally(() => { if (!cancelled) setLoadingPlants(false); });
+    setBrandPlants([]);
     setAnalysis(null);
     setAnalysisKey("");
-  }, [brand]);
+    return () => { cancelled = true; };
+  }, [brand, regionId, mix, countryCode]);
 
   // Set a sensible default departure time when entering step 3
   useEffect(() => {
     if (step === 3 && !scheduledAt) {
-      const NZT_OFFSET_MS = 12 * 60 * 60 * 1000;
-      const d = new Date(Date.now() + NZT_OFFSET_MS + 30 * 60_000);
-      const pad = (n: number) => String(n).padStart(2, "0");
-      setScheduledAt(
-        `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
-      );
+      setScheduledAt(nowInZoneInput(siteTz, 30));
     }
-  }, [step, scheduledAt]);
+  }, [step, scheduledAt, siteTz]);
 
   // Derive the effective selected plant (user pick OR algorithm best)
   const effectivePlant: PlantPredictionResult | null = (() => {
@@ -187,12 +235,20 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
   // Manual re-analyse trigger
   const handleAnalyse = async () => {
     if (!brand || !jobSiteData) { showToast("Select brand and job site first", "error"); return; }
-    const key = `${brand}|${(jobSiteData as any).display_name ?? jobSite}|${mix}`;
+    const key = `${brand}|${regionId}|${jobSiteData.display_name}|${mix}|${countryCode}`;
     setAnalysisKey(key);
     setAnalysis(null);
     setAnalysing(true);
     try {
-      const res = await analyseBrand({ brand, job_site_data: jobSiteData as unknown as Record<string, unknown>, concrete_mix: mix, top_n: 10, include_llm_analysis: false });
+      const res = await analyseBrand({
+        brand_id: brand,
+        ...(regionId ? { region_id: regionId } : {}),
+        job_site_data: jobSiteData as unknown as Record<string, unknown>,
+        country_code: countryCode,
+        concrete_mix: mix,
+        top_n: 10,
+        include_llm_analysis: false,
+      });
       setAnalysis(res);
     } catch (e) {
       showToast(e instanceof Error ? e.message : "Analysis failed", "error");
@@ -211,7 +267,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
         plant_id: String(effectivePlant.plant.id),
         job_site_address: jobSite,
         concrete_mix: mix,
-        scheduled_at: new Date(scheduledAt + ":00+12:00").toISOString(),
+        scheduled_at: zonedInputToUtcIso(scheduledAt, siteTz),
         vehicle_id: vehicleId || undefined,
         volume_m3: volumeM3 ? Number(volumeM3) : undefined,
         pour_duration_minutes: pourMin ? Number(pourMin) : undefined,
@@ -251,10 +307,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
 
   /*  Success state  */
   if (dispatched) {
-    const depDate = new Date(dispatched.scheduled_at).toLocaleString("en-NZ", {
-      weekday: "short", day: "numeric", month: "short",
-      hour: "2-digit", minute: "2-digit",
-    });
+    const depDate = formatInZone(dispatched.scheduled_at, siteTz, "full");
     return (
       <div className="p-4 rounded-xl bg-surface-container space-y-4">
         <div className="flex items-center gap-2">
@@ -304,7 +357,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
               disabled={loadingBrands}
               className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60">
               <option value="">{loadingBrands ? "Loading…" : "Select brand"}</option>
-              {brands.map((b) => <option key={b} value={b}>{b}</option>)}
+              {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </div>
 
@@ -350,12 +403,66 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
           </div>
 
           {/* Job site */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
+              COUNTRY
+            </label>
+            <select
+              value={country}
+              onChange={(e) => {
+                const nextCountry = e.target.value as SearchCountry;
+                setCountry(nextCountry);
+                setRegionId("");
+                setJobSite("");
+                setJobSiteData(null);
+                setAnalysis(null);
+                setAnalysisKey("");
+              }}
+              disabled={loading}
+              className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
+            >
+              <option value="nz">New Zealand</option>
+              <option value="in">India</option>
+            </select>
+          </div>
+
+          {countryRegions.length > 0 && (
+            <div className="space-y-1.5">
+              <label htmlFor="dispatch-region" className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
+                REGION
+              </label>
+              <select
+                id="dispatch-region"
+                value={regionId}
+                onChange={(e) => { setRegionId(e.target.value); setAnalysis(null); setAnalysisKey(""); }}
+                disabled={loading}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
+              >
+                <option value="">All regions</option>
+                {countryRegions.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}{r.administrative_area ? `, ${r.administrative_area}` : ""}
+                  </option>
+                ))}
+              </select>
+              {region && (
+                <p className="flex items-center gap-2 text-[11px] text-on-surface-variant">
+                  <span>Times in {zoneLabel(siteTz)}</span>
+                  <UncalibratedBadge status={region.calibration_status} />
+                </p>
+              )}
+            </div>
+          )}
+
           <AddressAutocomplete
             label="JOB SITE ADDRESS"
             value={jobSite}
             onChange={(v) => { setJobSite(v); setJobSiteData(null); setAnalysis(null); setAnalysisKey(""); }}
             onSelect={(s) => setJobSiteData(s)}
-            placeholder="e.g. 45 Queen Street, Auckland CBD"
+            country={country}
+            placeholder={country === "in"
+              ? "Search any place in Telangana"
+              : "e.g. 45 Queen Street, Auckland CBD"}
             disabled={loading}
           />
 
@@ -382,7 +489,10 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
                   <p className="text-xs font-semibold text-on-surface">
                     {selectedPlantId ? shown.plant.name : `★ Best: ${shown.plant.name}`}
                   </p>
-                  <RiskBadge level={shown.risk_level} />
+                  <div className="flex items-center gap-1.5">
+                    <UncalibratedBadge status={shown.calibration_status ?? region?.calibration_status} />
+                    <RiskBadge level={shown.risk_level} />
+                  </div>
                 </div>
                 <div className="flex flex-wrap gap-3 text-xs text-on-surface-variant">
                   {shown.google_eta_minutes != null && (
@@ -398,6 +508,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
                 {shown.remaining_life_minutes != null && (
                   <LifeBar remaining={shown.remaining_life_minutes} total={concreteWindow} />
                 )}
+                <PlantWarnings result={shown} />
               </div>
             );
           })()}
@@ -430,7 +541,10 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
           <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-1">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-on-surface">{effectivePlant.plant.name}</p>
-              <RiskBadge level={effectivePlant.risk_level} />
+              <div className="flex items-center gap-1.5">
+                <UncalibratedBadge status={effectivePlant.calibration_status ?? region?.calibration_status} />
+                <RiskBadge level={effectivePlant.risk_level} />
+              </div>
             </div>
             <p className="text-xs text-on-surface-variant">{effectivePlant.plant.address}</p>
             <p className="text-xs text-on-surface-variant mt-0.5">📍 {jobSite}</p>
@@ -447,12 +561,13 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
                 ⚠ Warning: concrete may expire before arrival — consider a closer plant
               </p>
             )}
+            <PlantWarnings result={effectivePlant} />
           </div>
 
           {/* Departure time */}
           <div className="space-y-1.5">
             <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
-              DEPARTURE DATE & TIME (NZST) <span className="text-md-red">*</span>
+              DEPARTURE DATE & TIME ({zoneLabel(siteTz)}, site local time) <span className="text-md-red">*</span>
             </label>
             <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors" />

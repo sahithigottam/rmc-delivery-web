@@ -20,10 +20,14 @@ export interface Suggestion {
   boundingbox?: string[];
 }
 
+export type SearchCountry = "nz" | "in";
+
 interface AddressAutocompleteProps {
   value: string;
   onChange: (value: string) => void;
   onSelect?: (suggestion: Suggestion) => void;
+  country?: string;
+  countryWide?: boolean;
   placeholder?: string;
   disabled?: boolean;
   label: string;
@@ -33,6 +37,8 @@ export default function AddressAutocomplete({
   value,
   onChange,
   onSelect,
+  country = "nz",
+  countryWide = false,
   placeholder,
   disabled,
   label,
@@ -58,57 +64,76 @@ export default function AddressAutocomplete({
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+
     const searchAddress = async () => {
       if (justSelectedRef.current) {
         justSelectedRef.current = false;
         return;
       }
 
+      setSuggestions([]);
+      setShowSuggestions(false);
+
       if (!value || value.length < 3) {
-        setSuggestions([]);
+        setLoading(false);
         return;
       }
 
+      const query = countryWide || country === "in"
+        ? value
+        : `${value}, Auckland, New Zealand`;
       setLoading(true);
       try {
+        const params = new URLSearchParams({
+          q: query,
+          format: "json",
+          addressdetails: "1",
+          limit: "10",
+          countrycodes: country,
+        });
+        if (!countryWide && country === "in") {
+          params.set("viewbox", "77.2,19.9,81.3,15.8");
+          params.set("bounded", "1");
+        }
         const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?` +
-            new URLSearchParams({
-              q: `${value}, Auckland, New Zealand`,
-              format: "json",
-              addressdetails: "1",
-              limit: "5",
-              countrycodes: "nz",
-            })
+          `https://nominatim.openstreetmap.org/search?${params}`,
+          { signal: controller.signal }
         );
 
         if (response.ok) {
-          const data = await response.json();
-          // Filter to only show results in Auckland region
-          const aucklandResults = data.filter((item: any) => {
-            const dn = item.display_name.toLowerCase();
-            const addr = item.address || {};
-            return (
-              dn.includes("auckland") ||
-              addr.city?.toLowerCase().includes("auckland") ||
-              addr.county?.toLowerCase().includes("auckland") ||
-              addr.state?.toLowerCase().includes("auckland") ||
-              addr.state_district?.toLowerCase().includes("auckland")
-            );
+          const data: Suggestion[] = await response.json();
+          const results = data.filter((item) => {
+            if (countryWide) return true;
+            const name = item.display_name.toLowerCase();
+            const address = Object.values(item.address ?? {})
+              .join(" ")
+              .toLowerCase();
+            if (country === "nz") {
+              return name.includes("auckland") || address.includes("auckland");
+            }
+            return item.address?.state?.toLowerCase() === "telangana";
           });
-          setSuggestions(aucklandResults);
+          setSuggestions(results);
           setShowSuggestions(true);
         }
       } catch (error) {
-        console.error("Address search error:", error);
+        if (!controller.signal.aborted) {
+          console.error("Address search error:", error);
+        }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     };
 
     const timeoutId = setTimeout(searchAddress, 300);
-    return () => clearTimeout(timeoutId);
-  }, [value]);
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [value, country, countryWide]);
 
   const handleSelect = (suggestion: Suggestion) => {
     justSelectedRef.current = true;

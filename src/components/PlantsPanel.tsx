@@ -1,17 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  getPlants,
-  createPlant,
-  updatePlant,
-  togglePlant,
-  deletePlant,
-} from "@/lib/api";
-import type { PlantCreate, PlantOut, JobSite } from "@/types/route";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getBrands, getPlants, getRegions, getCountries, getStates, getCities, isVersionConflict, setPlantActive } from "@/lib/api";
+import type { Brand, JobSite, PlantOut, Region } from "@/types/route";
 import { showToast } from "@/components/Toast";
-import AddressAutocomplete from "@/components/AddressAutocomplete";
-import type { Suggestion } from "@/components/AddressAutocomplete";
+import PlantFormModal from "@/components/PlantFormModal";
+import GeographyPanel from "@/components/GeographyPanel";
+import type { GeographyCatalogue } from "@/components/GeographySelectors";
 
 // ── Job-site localStorage helpers ─────────────────────────────────────────
 const JS_KEY = "rmc_job_sites";
@@ -23,140 +18,6 @@ function writeJobSites(sites: JobSite[]) {
 }
 function newId() {
   return Math.random().toString(36).slice(2, 10);
-}
-
-// ── Derive a rough region from lat/lng (Auckland NZ) ──────────────────────
-function deriveRegion(lat: number, lng: number): string {
-  if (lat > -36.75) return "north";
-  if (lng < 174.65) return "west";
-  if (lng > 174.90) return "east";
-  if (lat < -36.95) return "south";
-  return "central";
-}
-
-const BLANK: PlantCreate = {
-  name: "", brand: "", address: "", lat: 0, lng: 0, region: "central", active: true,
-};
-
-// ── Plant Modal ───────────────────────────────────────────────────────────
-function PlantModal({
-  initial,
-  existingBrands,
-  onSave,
-  onClose,
-}: {
-  initial: PlantCreate & { id?: string };
-  existingBrands: string[];
-  onSave: (data: PlantCreate, id?: string) => Promise<void>;
-  onClose: () => void;
-}) {
-  const [form, setForm] = useState<PlantCreate>({ ...initial });
-  const [saving, setSaving] = useState(false);
-  const [brandMode, setBrandMode] = useState<"existing" | "new">(
-    existingBrands.includes(initial.brand) ? "existing" : "new"
-  );
-  const [addressText, setAddressText] = useState(initial.address);
-
-  const set = (k: keyof PlantCreate, v: string | number | boolean) =>
-    setForm((f) => ({ ...f, [k]: v }));
-
-  const handleAddressSelect = (s: Suggestion) => {
-    const lat = parseFloat(s.lat);
-    const lng = parseFloat(s.lon);
-    setForm((f) => ({ ...f, address: s.display_name, lat, lng, region: deriveRegion(lat, lng) }));
-    setAddressText(s.display_name);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name || !form.brand || !form.address) {
-      showToast("Name, brand and address are required", "error"); return;
-    }
-    if (brandMode === "new" && existingBrands.map((b) => b.toLowerCase()).includes(form.brand.toLowerCase())) {
-      showToast(`Brand "${form.brand}" already exists — use "Use existing" instead`, "error"); return;
-    }
-    if (!form.lat || !form.lng) {
-      showToast("Please select an address from the dropdown to get coordinates", "error"); return;
-    }
-    setSaving(true);
-    try { await onSave(form, initial.id); onClose(); } finally { setSaving(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div role="dialog" aria-modal="true" aria-label={initial.id ? "Edit plant" : "Add plant"} className="bg-surface rounded-2xl shadow-xl w-full max-w-md mx-3 sm:mx-4 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-outline-variant">
-          <h2 className="font-semibold text-on-surface">{initial.id ? "Edit Plant" : "Add Plant"}</h2>
-          <button onClick={onClose} aria-label="Close" className="px-3 -mr-3 text-on-surface-variant hover:text-on-surface text-xl leading-none">&times;</button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto max-h-[80dvh]">
-          <div>
-            <label className="text-xs font-semibold text-on-surface-variant tracking-wide">PLANT NAME *</label>
-            <input value={form.name} onChange={(e) => set("name", e.target.value)}
-              className="mt-1 w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary"
-              placeholder="e.g. Holcim Avondale" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-on-surface-variant tracking-wide">BRAND *</label>
-            <div className="flex gap-4 mt-2 mb-2">
-              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <input type="radio" name="brandMode" checked={brandMode === "existing"}
-                  onChange={() => { setBrandMode("existing"); set("brand", existingBrands[0] ?? ""); }}
-                  className="accent-primary" disabled={existingBrands.length === 0} />
-                Use existing
-              </label>
-              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                <input type="radio" name="brandMode" checked={brandMode === "new"}
-                  onChange={() => { setBrandMode("new"); set("brand", ""); }}
-                  className="accent-primary" />
-                New brand
-              </label>
-            </div>
-            {brandMode === "existing" && existingBrands.length > 0 ? (
-              <select value={form.brand} onChange={(e) => set("brand", e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary">
-                <option value="">Select brand</option>
-                {existingBrands.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
-            ) : (
-              <input value={form.brand} onChange={(e) => set("brand", e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary"
-                placeholder="e.g. Holcim" />
-            )}
-          </div>
-          <div>
-            <AddressAutocomplete
-              label="PLANT ADDRESS *"
-              value={addressText}
-              onChange={(v) => { setAddressText(v); setForm((f) => ({ ...f, address: v, lat: 0, lng: 0 })); }}
-              onSelect={handleAddressSelect}
-              placeholder="e.g. 54 Patiki Road, Avondale, Auckland"
-            />
-            {form.lat !== 0 && form.lng !== 0 && (
-              <p className="mt-1 text-[11px] text-emerald-600 font-medium">
-                ✓ Coordinates captured: {form.lat.toFixed(5)}, {form.lng.toFixed(5)}
-              </p>
-            )}
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.active} onChange={(e) => set("active", e.target.checked)}
-              className="accent-primary w-4 h-4" />
-            <span className="text-sm text-on-surface">Active (visible in dispatch)</span>
-          </label>
-          <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose}
-              className="px-4 py-2 rounded-xl text-sm text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">
-              Cancel
-            </button>
-            <button type="submit" disabled={saving}
-              className="px-4 py-2 rounded-xl text-sm font-medium bg-primary text-on-primary hover:opacity-90 transition-opacity disabled:opacity-40">
-              {saving ? "Saving…" : initial.id ? "Save Changes" : "Add Plant"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
 }
 
 // ── Job Site Modal ────────────────────────────────────────────────────────
@@ -221,69 +82,99 @@ function JobSiteModal({
 }
 
 // ── Main Panel ────────────────────────────────────────────────────────────
-export default function PlantsPanel() {
+export default function PlantsPanel(props: {
+  canManage: boolean;
+  organizationId?: string;
+  showJobSites?: boolean;
+  catalogueRevision?: number;
+}) {
+  return <ScopedPlantsPanel key={props.organizationId ?? "global"} {...props} />;
+}
+
+function ScopedPlantsPanel({
+  canManage,
+  organizationId,
+  showJobSites = true,
+  catalogueRevision = 0,
+}: {
+  canManage: boolean;
+  organizationId?: string;
+  showJobSites?: boolean;
+  catalogueRevision?: number;
+}) {
   const [plants, setPlants] = useState<PlantOut[]>([]);
+  const [brandList, setBrandList] = useState<Brand[]>([]);
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [geography, setGeography] = useState<GeographyCatalogue>({ countries: [], states: [], cities: [], regions: [] });
+  const [loadError, setLoadError] = useState("");
+  const [catalogueReady, setCatalogueReady] = useState(false);
   const [jobSites, setJobSites] = useState<JobSite[]>([]);
   const [loading, setLoading] = useState(true);
-  const [plantModal, setPlantModal] = useState<(PlantCreate & { id?: string }) | null>(null);
+  // undefined = closed, null = adding, PlantOut = editing
+  const [plantModal, setPlantModal] = useState<PlantOut | null | undefined>(undefined);
   const [jobSiteModal, setJobSiteModal] = useState<JobSite | "new" | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<{ type: "plant" | "site"; id: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ type: "site"; id: string } | null>(null);
+  const [confirmDeactivate, setConfirmDeactivate] = useState<PlantOut | null>(null);
   const [brandFilter, setBrandFilter] = useState("all");
+  const [regionFilter, setRegionFilter] = useState("all");
   const [showInactive, setShowInactive] = useState(true);
+  const requestGeneration = useRef(0);
 
   const refresh = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     setLoading(true);
+    setLoadError("");
     try {
-      const data = await getPlants(undefined, undefined, false);
-      setPlants(data);
-    } catch {
-      showToast("Failed to load plants", "error");
+      const [p, b, r, countries, states, cities] = await Promise.all([
+        getPlants({ organizationId, activeOnly: false }), getBrands(organizationId), getRegions(undefined, organizationId),
+        getCountries(organizationId), getStates(undefined, organizationId), getCities(undefined, organizationId),
+      ]);
+      if (generation !== requestGeneration.current) return false;
+      setPlants(p);
+      setBrandList(b);
+      setRegions(r);
+      setGeography({ countries, states, cities, regions: r });
+      setCatalogueReady(true);
+      return true;
+    } catch (e) {
+      if (generation !== requestGeneration.current) return false;
+      setLoadError(e instanceof Error ? e.message : "Failed to load catalogue");
+      return false;
     } finally {
-      setLoading(false);
+      if (generation === requestGeneration.current) setLoading(false);
     }
-  }, []);
+  }, [organizationId]);
+
+  const openPlantForm = async (plant: PlantOut | null) => {
+    if (await refresh()) setPlantModal(plant);
+  };
 
   useEffect(() => {
     refresh();
     setJobSites(readJobSites());
-  }, [refresh]);
+    return () => { requestGeneration.current++; };
+  }, [refresh, catalogueRevision]);
 
-  const handleSavePlant = async (data: PlantCreate, id?: string) => {
-    try {
-      if (id) {
-        const updated = await updatePlant(id, data);
-        setPlants((prev) => prev.map((p) => (p.id === id ? updated : p)));
-        showToast("Plant updated", "success");
-      } else {
-        const created = await createPlant(data);
-        setPlants((prev) => [...prev, created]);
-        showToast("Plant added", "success");
-      }
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Save failed", "error");
-      throw e;
-    }
+  const handleSaved = (saved: PlantOut) => {
+    setPlants((prev) =>
+      prev.some((p) => p.id === saved.id) ? prev.map((p) => (p.id === saved.id ? saved : p)) : [...prev, saved],
+    );
   };
 
   const handleToggle = async (plant: PlantOut) => {
     try {
-      const updated = await togglePlant(plant.id, !plant.active);
-      setPlants((prev) => prev.map((p) => (p.id === plant.id ? updated : p)));
+      const updated = await setPlantActive(plant, !plant.active);
+      handleSaved(updated);
       showToast(`${updated.name} ${updated.active ? "activated" : "deactivated"}`, "info");
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Toggle failed", "error");
-    }
-  };
-
-  const handleDeletePlant = async (id: string) => {
-    try {
-      await deletePlant(id);
-      setPlants((prev) => prev.filter((p) => p.id !== id));
-      showToast("Plant deleted", "success");
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : "Delete failed", "error");
+      if (isVersionConflict(e)) {
+        showToast(`${plant.name} was changed by someone else. Reloaded the latest — please try again.`, "error");
+        void refresh();
+      } else {
+        showToast(e instanceof Error ? e.message : "Update failed", "error");
+      }
     } finally {
-      setConfirmDelete(null);
+      setConfirmDeactivate(null);
     }
   };
 
@@ -312,15 +203,21 @@ export default function PlantsPanel() {
     showToast("Job site deleted", "success");
   };
 
-  const brands = Array.from(new Set(plants.map((p) => p.brand))).sort();
+  const brandName = (id: string) => brandList.find((b) => b.id === id)?.name ?? id;
+  const regionLabel = (id: string | null) => (id ? regions.find((r) => r.id === id)?.name ?? id : "—");
+  const brandIds = Array.from(new Set([...brandList.map((b) => b.id), ...plants.map((p) => p.brand_id)]))
+    .sort((a, b) => brandName(a).localeCompare(brandName(b)));
   const visible = plants.filter((p) => {
     if (!showInactive && !p.active) return false;
-    if (brandFilter !== "all" && p.brand !== brandFilter) return false;
+    if (brandFilter !== "all" && p.brand_id !== brandFilter) return false;
+    if (regionFilter !== "all" && p.region_id !== regionFilter) return false;
     return true;
   });
 
   const renderToggle = (plant: PlantOut) => (
-    <button role="switch" aria-checked={plant.active} aria-label={`${plant.name} active`} onClick={() => handleToggle(plant)}
+    !canManage ? <span className="text-xs">{plant.active ? "Active" : "Inactive"}</span> :
+    <button role="switch" aria-checked={plant.active} aria-label={`${plant.name} active`}
+      onClick={() => (plant.active ? setConfirmDeactivate(plant) : handleToggle(plant))}
       className={`relative w-9 h-5 rounded-full transition-colors before:absolute before:-inset-3.5 before:content-[''] ${plant.active ? "bg-primary" : "bg-outline-variant"}`}>
       <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${plant.active ? "translate-x-4" : "translate-x-0.5"}`} />
     </button>
@@ -328,6 +225,11 @@ export default function PlantsPanel() {
 
   return (
     <div className="max-w-6xl mx-auto px-3 sm:px-5 py-6 space-y-8">
+      {loadError && <p role="alert" className="text-error">{loadError} <button onClick={refresh} className="underline">Retry</button></p>}
+      {canManage && organizationId && catalogueReady &&
+        <GeographyPanel key={organizationId} organizationId={organizationId} catalogue={geography}
+          disabled={loading || !!loadError}
+          onRefresh={async () => { await refresh(); }} />}
 
       {/* ── Plants section ── */}
       <section>
@@ -336,22 +238,34 @@ export default function PlantsPanel() {
             <h1 className="text-lg font-semibold">Concrete Plants</h1>
             <p className="text-sm text-on-surface-variant">{plants.length} plants · {plants.filter((p) => p.active).length} active</p>
           </div>
-          <button onClick={() => setPlantModal({ ...BLANK })}
+          {canManage && organizationId && <button disabled={loading || !!loadError} onClick={() => void openPlantForm(null)}
             className="flex items-center gap-1.5 min-h-12 md:min-h-0 px-4 py-2 bg-primary text-on-primary text-sm font-medium rounded-xl hover:opacity-90 transition-opacity whitespace-nowrap">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 5v14M5 12h14" />
             </svg>
-            Add Plant
-          </button>
+            {loading ? "Loading catalogue..." : "Add Plant"}
+          </button>}
         </div>
+        {canManage && !organizationId && (
+          <p className="mb-4 text-sm text-on-surface-variant">
+            To create a plant, open its business from Businesses first. Legacy unowned records are labelled below; they are never assigned automatically.
+          </p>
+        )}
 
         {/* Filters */}
         <div className="flex flex-wrap gap-2 mb-4 items-center">
           <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}
             className="px-3 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary">
             <option value="all">All brands</option>
-            {brands.map((b) => <option key={b} value={b}>{b}</option>)}
+            {brandIds.map((b) => <option key={b} value={b}>{brandName(b)}</option>)}
           </select>
+          {regions.length > 0 && (
+            <select value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)} aria-label="Region"
+              className="px-3 py-1.5 rounded-lg border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary">
+              <option value="all">All regions</option>
+              {regions.map((r) => <option key={r.id} value={r.id}>{r.name} ({r.country_code})</option>)}
+            </select>
+          )}
           <label className="flex items-center gap-1.5 min-h-12 md:min-h-0 text-sm text-on-surface-variant cursor-pointer ml-1">
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)}
               className="accent-primary w-3.5 h-3.5" />
@@ -383,17 +297,20 @@ export default function PlantsPanel() {
             {visible.map((plant) => (
               <div key={plant.id} className={`rounded-xl border border-outline-variant p-3 space-y-2 ${!plant.active ? "opacity-60" : ""}`}>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-on-surface [overflow-wrap:anywhere]">{plant.name}</span>
+                  <span className="font-medium text-on-surface [overflow-wrap:anywhere]">{plant.name}
+                    {canManage && plant.organization_id === null && <span className="block text-xs text-error">Legacy - unowned</span>}
+                  </span>
                   {renderToggle(plant)}
                 </div>
-                <span className="inline-block px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{plant.brand}</span>
-                <p className="text-sm text-on-surface-variant [overflow-wrap:anywhere]">{plant.address}</p>
-                <div className="flex gap-2">
-                  <button onClick={() => setPlantModal({ ...plant })}
-                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">Edit</button>
-                  <button onClick={() => setConfirmDelete({ type: "plant", id: plant.id })}
-                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">Delete</button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-block px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{brandName(plant.brand_id)}</span>
+                  <span className="text-xs text-on-surface-variant">{regionLabel(plant.region_id)}</span>
                 </div>
+                <p className="text-sm text-on-surface-variant [overflow-wrap:anywhere]">{plant.address}</p>
+                {canManage && <div className="flex gap-2">
+                  <button disabled={loading} onClick={() => void openPlantForm(plant)}
+                    className="flex-1 min-h-12 rounded-lg text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">Edit</button>
+                </div>}
               </div>
             ))}
           </div>
@@ -403,34 +320,34 @@ export default function PlantsPanel() {
                 <tr>
                   <th className="px-4 py-3 text-left font-medium">Name</th>
                   <th className="px-4 py-3 text-left font-medium">Brand</th>
-                  <th className="px-4 py-3 text-left font-medium hidden md:table-cell">Address</th>
+                  <th className="px-4 py-3 text-left font-medium">Region</th>
+                  <th className="px-4 py-3 text-left font-medium hidden lg:table-cell">Address</th>
                   <th className="px-4 py-3 text-center font-medium">Active</th>
-                  <th className="px-4 py-3 text-right font-medium">Actions</th>
+                  {canManage && <th className="px-4 py-3 text-right font-medium">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/50">
                 {visible.map((plant) => (
                   <tr key={plant.id} className={`hover:bg-surface-container/50 transition-colors ${!plant.active ? "opacity-50" : ""}`}>
-                    <td className="px-4 py-3 font-medium text-on-surface">{plant.name}</td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{plant.brand}</span>
+                    <td className="px-4 py-3 font-medium text-on-surface">{plant.name}
+                      {canManage && plant.organization_id === null && <span className="block text-xs text-error">Legacy - unowned</span>}
                     </td>
-                    <td className="px-4 py-3 text-on-surface-variant hidden md:table-cell max-w-xs truncate">{plant.address}</td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-semibold">{brandName(plant.brand_id)}</span>
+                    </td>
+                    <td className="px-4 py-3 text-on-surface-variant">{regionLabel(plant.region_id)}</td>
+                    <td className="px-4 py-3 text-on-surface-variant hidden lg:table-cell max-w-xs truncate">{plant.address}</td>
                     <td className="px-4 py-3 text-center">
                       {renderToggle(plant)}
                     </td>
-                    <td className="px-4 py-3">
+                    {canManage && <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={() => setPlantModal({ ...plant })}
+                        <button disabled={loading} onClick={() => void openPlantForm(plant)}
                           className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors">
                           Edit
                         </button>
-                        <button onClick={() => setConfirmDelete({ type: "plant", id: plant.id })}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">
-                          Delete
-                        </button>
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -441,7 +358,7 @@ export default function PlantsPanel() {
       </section>
 
       {/* ── Job Sites section ── */}
-      <section>
+      {showJobSites && <section>
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-lg font-semibold">Job Sites</h2>
@@ -508,15 +425,17 @@ export default function PlantsPanel() {
           </div>
           </>
         )}
-      </section>
+      </section>}
 
       {/* ── Modals ── */}
-      {plantModal && (
-        <PlantModal
-          initial={plantModal}
-          existingBrands={brands}
-          onSave={handleSavePlant}
-          onClose={() => setPlantModal(null)}
+      {canManage && plantModal !== undefined && (
+        <PlantFormModal
+          plant={plantModal}
+          brands={brandList.filter((brand) => brand.organization_id === (organizationId ?? plantModal?.organization_id ?? null))}
+          regions={regions}
+          geography={geography}
+          onSaved={handleSaved}
+          onClose={() => setPlantModal(undefined)}
         />
       )}
       {jobSiteModal && (
@@ -526,19 +445,35 @@ export default function PlantsPanel() {
           onClose={() => setJobSiteModal(null)}
         />
       )}
+      {canManage && confirmDeactivate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div role="dialog" aria-modal="true" aria-label="Confirm deactivate" className="bg-surface rounded-2xl shadow-xl w-full max-w-sm mx-3 sm:mx-4 p-5 space-y-4">
+            <p className="text-sm text-on-surface">
+              Deactivate <strong>{confirmDeactivate.name}</strong>? It won&apos;t be offered for new dispatches.
+              Past trips keep their plant details, and you can reactivate it at any time.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setConfirmDeactivate(null)}
+                className="px-4 py-2 rounded-lg text-sm text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">Cancel</button>
+              <button onClick={() => handleToggle(confirmDeactivate)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-amber-600 text-white hover:opacity-90 transition-opacity">
+                Deactivate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div role="dialog" aria-modal="true" aria-label="Confirm delete" className="bg-surface rounded-2xl shadow-xl w-full max-w-sm mx-3 sm:mx-4 p-5 space-y-4">
             <p className="text-sm text-on-surface">
-              Delete this {confirmDelete.type === "plant" ? "plant" : "job site"}? This cannot be undone.
+              Delete this job site? This cannot be undone.
             </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setConfirmDelete(null)}
                 className="px-4 py-2 rounded-lg text-sm text-on-surface-variant border border-outline-variant hover:bg-surface-container transition-colors">Cancel</button>
               <button
-                onClick={() => confirmDelete.type === "plant"
-                  ? handleDeletePlant(confirmDelete.id)
-                  : handleDeleteSite(confirmDelete.id)}
+                onClick={() => handleDeleteSite(confirmDelete.id)}
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:opacity-80 transition-opacity">
                 Delete
               </button>
