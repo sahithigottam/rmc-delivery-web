@@ -385,47 +385,7 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
             </select>
           </div>
 
-          {/* Plant — shown once brand is selected */}
-          {brand && (
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">PLANT</label>
-                {analysis && !selectedPlantId && (
-                  <span className="text-[10px] text-emerald-600 font-medium">★ algorithm pick</span>
-                )}
-              </div>
-              <select
-                value={selectedPlantId ?? ""}
-                onChange={(e) => setSelectedPlantId(e.target.value || null)}
-                disabled={loadingPlants}
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
-              >
-                <option value="">
-                  {loadingPlants ? "Loading plants…" : "N/A"}
-                </option>
-                {brandPlants.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Mix type */}
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">CONCRETE MIX</label>
-            <div className="grid grid-cols-3 gap-2">
-              {MIXES.map((m) => (
-                <button key={m} onClick={() => { setMix(m); setAnalysis(null); setAnalysisKey(""); }}
-                  className={`py-2 rounded-xl text-sm font-bold border transition-all ${
-                    mix === m ? "bg-primary text-on-primary border-primary shadow-sm" : "border-outline-variant text-on-surface-variant hover:bg-surface-container"
-                  }`}>
-                  {m}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-on-surface-variant">{MIX_LABELS[mix]}</p>
-          </div>
-
+          {/* Region — after brand; it narrows the plants below */}
           {countryRegions.length > 0 && (
             <div className="space-y-1.5">
               <label htmlFor="dispatch-region" className="text-[11px] font-semibold text-on-surface-variant tracking-wide">
@@ -451,6 +411,47 @@ export default function DispatchPanel({ onDispatched }: DispatchPanelProps) {
                   <UncalibratedBadge status={region.calibration_status} />
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Mix type — chosen before the plant, because the plant list depends on it */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">CONCRETE MIX</label>
+            <div className="grid grid-cols-3 gap-2">
+              {MIXES.map((m) => (
+                <button key={m} onClick={() => { setMix(m); setAnalysis(null); setAnalysisKey(""); }}
+                  className={`py-2 rounded-xl text-sm font-bold border transition-all ${
+                    mix === m ? "bg-primary text-on-primary border-primary shadow-sm" : "border-outline-variant text-on-surface-variant hover:bg-surface-container"
+                  }`}>
+                  {m}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-on-surface-variant">{MIX_LABELS[mix]}</p>
+          </div>
+
+          {/* Plant — shown once brand is selected */}
+          {brand && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-on-surface-variant tracking-wide">PLANT</label>
+                {analysis && !selectedPlantId && (
+                  <span className="text-[10px] text-emerald-600 font-medium">★ algorithm pick</span>
+                )}
+              </div>
+              <select
+                value={selectedPlantId ?? ""}
+                onChange={(e) => setSelectedPlantId(e.target.value || null)}
+                disabled={loadingPlants}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant bg-surface text-sm focus:outline-none focus:border-primary transition-colors disabled:opacity-60"
+              >
+                <option value="">
+                  {loadingPlants ? "Loading plants…" : "N/A"}
+                </option>
+                {brandPlants.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
             </div>
           )}
 

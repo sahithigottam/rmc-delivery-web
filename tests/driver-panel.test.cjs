@@ -87,19 +87,59 @@ test("a passed ETA is marked outdated instead of shown as an arrival time", () =
   assert.doesNotMatch(markup, /font-semibold text-on-surface">10:30 pm/);
 });
 
-test("End Trip is a quiet secondary button until the driver is near the site", () => {
-  const far = panel("in_progress");
-  const farMarkup = renderToStaticMarkup(React.createElement(far.Component, far.props));
-  assert.match(farMarkup, /border border-outline-variant font-medium text-on-surface-variant[^"]*"[^>]*>\s*End Trip/);
-  assert.doesNotMatch(farMarkup, /bg-md-green[^>]*>\s*End Trip/);
-  const near = panel("in_progress");
-  near.props.driverPosition = [1, 2];
-  const nearMarkup = renderToStaticMarkup(React.createElement(near.Component, near.props));
-  assert.match(nearMarkup, /bg-md-green text-white font-semibold[^>]*>\s*End Trip/);
+test("Cancel trip, End Trip, Pause and the forward actions each have their own fill", () => {
+  const classOf = (markup, label) => {
+    const match = markup.match(new RegExp(`class="([^"]*)"[^>]*>\\s*${label}\\s*<`));
+    assert.ok(match, `${label} button is present`);
+    return match[1];
+  };
+  const pending = panel("pending");
+  const pendingMarkup = renderToStaticMarkup(React.createElement(pending.Component, pending.props));
+  assert.match(classOf(pendingMarkup, "Start Trip"), /bg-md-green/);
+  assert.match(classOf(pendingMarkup, "Cancel trip"), /bg-error text-white/);
+
+  const paused = panel("paused");
+  const pausedMarkup = renderToStaticMarkup(React.createElement(paused.Component, paused.props));
+  assert.match(classOf(pausedMarkup, "Resume"), /bg-md-green/);
+  assert.match(classOf(pausedMarkup, "Cancel trip"), /bg-error text-white/);
+
+  const inProgress = panel("in_progress");
+  const markup = renderToStaticMarkup(React.createElement(inProgress.Component, inProgress.props));
+  const end = classOf(markup, "End Trip");
+  const pause = classOf(markup, "Pause");
+  assert.match(end, /bg-md-green text-white/);
+  assert.match(pause, /bg-md-yellow text-on-surface/, "Pause has its own amber fill");
+  assert.doesNotMatch(end + pause, /bg-error|text-error|md-red/, "red is reserved for cancelling the trip");
+  assert.doesNotMatch(classOf(pendingMarkup, "Cancel trip"), /bg-md-green|bg-surface-container/);
+  for (const cls of [end, pause, classOf(pendingMarkup, "Cancel trip")]) {
+    assert.match(cls, /\bbg-(md-green|md-yellow|error)\b(?!\/)/, "a solid fill, not a faint tint that reads as white");
+  }
+  assert.notEqual(end, pause);
+});
+
+test("closing the start form says Back, so it cannot be mistaken for cancelling the trip", () => {
+  const form = panel("pending", { 1: true });
+  const markup = renderToStaticMarkup(React.createElement(form.Component, form.props));
+  assert.match(markup, />\s*Back\s*</);
+  assert.doesNotMatch(markup, />\s*Cancel\s*</);
+  const closed = panel("pending");
+  const closedMarkup = renderToStaticMarkup(React.createElement(closed.Component, closed.props));
+  assert.match(closedMarkup, />\s*Cancel trip\s*</, "cancelling the trip is available again once the form is closed");
+});
+
+test("End Trip in the trip card is solid green at any distance; only the header waits for the site", () => {
+  for (const driverPosition of [undefined, [1, 2]]) {
+    const view = panel("in_progress");
+    if (driverPosition) view.props.driverPosition = driverPosition;
+    const markup = renderToStaticMarkup(React.createElement(view.Component, view.props));
+    assert.match(markup, /bg-md-green text-white text-sm font-semibold[^>]*>\s*End Trip/);
+  }
   const office = panel("in_progress");
   delete office.props.driverControls;
   const officeMarkup = renderToStaticMarkup(React.createElement(office.Component, office.props));
-  assert.match(officeMarkup, /bg-md-green text-white font-semibold[^>]*>\s*End Trip/);
+  assert.match(officeMarkup, /bg-md-green text-white text-sm font-semibold[^>]*>\s*End Trip/);
+  const main = fs.readFileSync(path.join(__dirname, "..", "src", "components", "MainApp.tsx"), "utf8");
+  assert.match(main, /isNearSite\(activeTruckPosition, trip\)/, "the header action still waits until the driver is near the site");
 });
 
 test("stage actions match pending, tracking, paused and completed trips", () => {
@@ -170,9 +210,13 @@ test("turn-by-turn instructions are in a collapsed accordion and forms expand th
   assert.match(source, /GPS and simulation settings<\/h3>/);
   assert.match(source, /More details<\/summary>/);
   assert.doesNotMatch(source, /Trip history<\/summary>|Route information<\/summary>|GPS and simulation settings<\/summary>/);
-  assert.equal((source.match(/<SimulationControls\b/g) ?? []).length, 1);
-  assert.ok(source.indexOf("<SimulationControls") < source.indexOf("<TripManagement"));
-  assert.ok(source.indexOf("<SimulationControls") < source.indexOf("More details</summary>"));
+  assert.equal((source.match(/<SimulationControls\b/g) ?? []).length, 2, "the switch and the details are separate");
+  assert.match(source, /<SimulationControls \{\.\.\.trackingProps\} part="switch" \/>/);
+  assert.match(source, /<SimulationControls \{\.\.\.trackingProps\} part="details" \/>/);
+  const switchAt = source.indexOf('part="switch"');
+  const detailsAt = source.indexOf('part="details"');
+  assert.ok(switchAt < source.indexOf("<TripManagement"), "the switch stays at the top, above the trip card");
+  assert.ok(detailsAt > source.indexOf("More details</summary>"), "everything else is under More details");
 });
 
 test("mode switch reflects GPS selection and toggles in both directions", () => {
@@ -204,6 +248,37 @@ test("mode switch reflects GPS selection and toggles in both directions", () => 
     const markup = renderToStaticMarkup(tree);
     assert.match(markup, /Simulation/);
     assert.match(markup, /GPS/);
+  }
+});
+
+test("the switch can be shown alone at the top, with everything else in the details", () => {
+  const filename = path.join(__dirname, "..", "src", "components", "SimulationControls.tsx");
+  const compiled = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const module = { exports: {} };
+  vm.runInNewContext(compiled, {
+    module, exports: module.exports,
+    require(id) {
+      if (id === "react") return { ...React, useEffect() {}, useState: () => [Date.now(), () => {}] };
+      if (id === "./TruckIcon") return { default: () => null };
+      return require(id);
+    },
+  }, { filename });
+  const render = (part, gpsMode) => renderToStaticMarkup(module.exports.default({
+    part, gpsMode, simState: "idle", progress: 0, remainingKm: 10, trafficMsg: null,
+    gpsState: "idle", gpsRemainingKm: 10, gpsAccuracy: null, gpsSpeed: null, gpsError: null,
+    gpsTrafficMsg: null, speedMultiplier: 1, onGpsModeChange() {}, onGpsStart() {}, onGpsStop() {},
+    onSpeedChange() {}, onToggle() {}, onStop() {},
+  }));
+  for (const gpsMode of [false, true]) {
+    const onlySwitch = render("switch", gpsMode);
+    assert.match(onlySwitch, /role="switch"/);
+    assert.doesNotMatch(onlySwitch, /Simulation Speed|GPS not started|Start GPS Tracking|Demo only/);
+    const details = render("details", gpsMode);
+    assert.doesNotMatch(details, /role="switch"/);
+    assert.match(details, gpsMode ? /GPS not started/ : /Simulation Speed/);
+    assert.match(render("all", gpsMode), /role="switch"/);
   }
 });
 

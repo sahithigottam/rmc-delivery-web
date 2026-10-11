@@ -8,9 +8,10 @@ import { useSimulation } from "@/hooks/useSimulation";
 import { useGpsTracking } from "@/hooks/useGpsTracking";
 import { useTripStream } from "@/hooks/useTripStream";
 import { decodePolyline, remainingRoute } from "@/lib/polyline";
-import { liveTripSummary, nextTripAction, tripStatusLabel, type TripActionRequest, type TripActionType } from "@/lib/liveTripSummary";
+import { liveTripSummary, nextTripAction, peekDetails, displayAddress, tripStatusLabel, type TripActionRequest, type TripActionType } from "@/lib/liveTripSummary";
 import { isNearSite } from "@/lib/nearSite";
 import DriverVoiceToggle from "@/components/DriverVoiceToggle";
+import HeaderTrackingStatus from "@/components/HeaderTrackingStatus";
 import SimulationControls from "@/components/SimulationControls";
 import TripManagement from "@/components/TripManagement";
 import TripEventLog from "@/components/TripEventLog";
@@ -217,7 +218,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
 
   /* Trip monitor: refreshes trip details and reports the backend's traffic checks */
   const monitoredTrip = viewedTrip ?? trip;
-  const { connected, error: tripRefreshError, discardPendingUpdates } = useTripStream({
+  const { error: tripRefreshError, discardPendingUpdates } = useTripStream({
     tripId: monitoredTrip?.id ?? null,
     enabled: monitoredTrip?.status === "pending" || monitoredTrip?.status === "in_progress" || monitoredTrip?.status === "paused",
     onTripUpdate: handleTripUpdate,
@@ -313,6 +314,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
     summary = `Trip #${viewedTrip.id}`;
     summaryDetail = tripStatusLabel(viewedTrip.status);
   }
+  const peek = activeTab === "trip" && !viewedTrip && trip ? peekDetails(trip) : null;
   const requestTripAction = (type: TripActionType) => {
     if (type === "start-gps") {
       startDriverGps();
@@ -327,11 +329,41 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
       onClick={() => requestTripAction(action.type)}
       className="flex min-h-12 flex-shrink-0 items-center whitespace-nowrap px-1"
     >
-      <span className={`rounded-lg px-3 py-1.5 text-sm font-medium ${action.type === "end" ? "border border-primary text-primary" : "bg-primary text-on-primary"}`}>
+      <span className={`rounded-lg px-3 py-1.5 text-sm font-medium ${action.type === "end" ? "bg-md-green text-white" : "bg-primary text-on-primary"}`}>
         {action.label}
       </span>
     </button>
   ))(headerAction);
+
+  const trackingProps = {
+    simState: sim.simState,
+    progress: sim.progress,
+    remainingKm: sim.remainingKm,
+    trafficMsg: sim.trafficMsg,
+    speedMultiplier: sim.speedMultiplier,
+    currentSpeed: sim.currentSpeed,
+    onSpeedChange: sim.setSpeedMultiplier,
+    onToggle: sim.toggle,
+    onStop: sim.stop,
+    gpsMode,
+    onGpsModeChange: (on: boolean) => {
+      setGpsMode(on);
+      if (on) sim.stop();
+      else stopGps();
+    },
+    gpsState: gps.gpsState,
+    gpsAccuracy: gps.gpsAccuracy,
+    gpsSpeed: gps.gpsSpeed,
+    gpsError: gps.gpsError,
+    gpsRemainingKm: roadRemainingKm,
+    gpsLastFixAt: gps.lastFixAt,
+    gpsLastSentAt: gps.lastSentAt,
+    gpsPendingCount: gps.pendingCount,
+    gpsWakeLockActive: gps.wakeLockActive,
+    gpsTrafficMsg: tripTrafficMsg,
+    onGpsStart: startGps,
+    onGpsStop: stopGps,
+  };
 
   return (
     <div className="app-viewport flex flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
@@ -340,11 +372,16 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
       {/* Top bar */}
       <header className="app-header flex items-center h-14 px-3 lg:px-5 bg-primary text-on-primary shadow-md z-30 flex-shrink-0">
         <span className="text-lg font-medium tracking-wide flex-1">RMC Delivery</span>
-        {connected && liveTrip && (
-          <div className="flex items-center gap-2 text-sm opacity-90 whitespace-nowrap mr-3">
-            <div className="w-2 h-2 rounded-full bg-md-green animate-pulse" />
-            Live Tracking
-          </div>
+        {trip && (
+          <HeaderTrackingStatus
+            status={trip.status}
+            gpsMode={gpsMode}
+            gpsState={gps.gpsState}
+            simActive={!gpsMode && sim.simState !== "idle"}
+            lastFixAt={gps.lastFixAt}
+            lastSentAt={gps.lastSentAt}
+            pendingCount={gps.pendingCount}
+          />
         )}
         <AuthControls />
       </header>
@@ -515,38 +552,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                       </div>
                     )}
                     {!viewedTrip && trip?.status === "in_progress" && (
-                      <section aria-label="GPS and simulation settings" className="space-y-2">
-                        <h3 className="text-sm font-medium">GPS and simulation settings</h3>
-                        <SimulationControls
-                          simState={sim.simState}
-                          progress={sim.progress}
-                          remainingKm={sim.remainingKm}
-                          trafficMsg={sim.trafficMsg}
-                          speedMultiplier={sim.speedMultiplier}
-                          currentSpeed={sim.currentSpeed}
-                          onSpeedChange={sim.setSpeedMultiplier}
-                          onToggle={sim.toggle}
-                          onStop={sim.stop}
-                          gpsMode={gpsMode}
-                          onGpsModeChange={(on) => {
-                            setGpsMode(on);
-                            if (on) sim.stop();
-                            else stopGps();
-                          }}
-                          gpsState={gps.gpsState}
-                          gpsAccuracy={gps.gpsAccuracy}
-                          gpsSpeed={gps.gpsSpeed}
-                          gpsError={gps.gpsError}
-                          gpsRemainingKm={roadRemainingKm}
-                          gpsLastFixAt={gps.lastFixAt}
-                          gpsLastSentAt={gps.lastSentAt}
-                          gpsPendingCount={gps.pendingCount}
-                          gpsWakeLockActive={gps.wakeLockActive}
-                          gpsTrafficMsg={tripTrafficMsg}
-                          onGpsStart={startGps}
-                          onGpsStop={stopGps}
-                        />
-                      </section>
+                      <SimulationControls {...trackingProps} part="switch" />
                     )}
                     <TripManagement
                       actionRequest={actionRequest}
@@ -580,6 +586,12 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                     <details className="trip-accordion">
                       <summary className="min-h-12 flex items-center cursor-pointer text-sm font-medium text-primary">More details</summary>
                       <div className="space-y-4">
+                      {!viewedTrip && trip?.status === "in_progress" && (
+                        <section aria-label="GPS and simulation settings" className="space-y-2">
+                          <h3 className="text-sm font-medium">GPS and simulation settings</h3>
+                          <SimulationControls {...trackingProps} part="details" />
+                        </section>
+                      )}
                       <h3 className="text-sm font-medium">Trip history</h3>
                     <TripEventLog
                       tripId={(viewedTrip ?? trip)?.id ?? null}
@@ -589,7 +601,7 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                     <div className="lg:hidden">
                       <h3 className="text-sm font-medium">Route information</h3>
                       {shownRoute ? (
-                        <InfoPanel route={shownRoute} simState={viewedTrip ? "idle" : sim.simState} simProgress={viewedTrip ? 0 : sim.progress} />
+                        <InfoPanel compact route={shownRoute} simState={viewedTrip ? "idle" : sim.simState} simProgress={viewedTrip ? 0 : sim.progress} />
                       ) : shownTrip ? (
                         <TripInfoPanel trip={shownTrip} />
                       ) : null}
@@ -663,12 +675,12 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                   currentSpeed={gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed}
                 />}
                 {sheet === "collapsed" && (
-                  <div className="absolute bottom-4 left-4 right-4 z-[1100] flex items-center gap-1 rounded-2xl border border-outline-variant bg-surface pr-1 shadow-lg lg:bottom-auto lg:left-auto lg:right-3 lg:top-3 lg:max-w-xs">
+                  <div className="absolute bottom-4 left-4 right-4 z-[1100] rounded-2xl border border-outline-variant bg-surface shadow-lg lg:bottom-auto lg:left-auto lg:right-3 lg:top-3 lg:max-w-xs">
                   <button
                     type="button"
                     onClick={() => setSheet("half")}
                     aria-label="Show details"
-                    className="flex min-h-12 min-w-0 flex-1 items-center gap-3 pl-4 text-left"
+                    className="flex min-h-12 w-full min-w-0 items-center gap-3 px-4 text-left"
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-primary">
                       <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
@@ -679,11 +691,35 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                         <span className="block truncate text-xs text-on-surface-variant">{summaryDetail ?? trafficMsg}</span>
                       )}
                     </span>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2 flex-shrink-0 text-on-surface-variant">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="flex-shrink-0 text-on-surface-variant">
                       <path d="M6 15l6-6 6 6" />
                     </svg>
                   </button>
-                  {headerActionButton}
+                  {peek && (
+                    <div className="flex gap-3 px-4 pb-2">
+                      <span aria-hidden="true" className="flex flex-col items-center py-1">
+                        <span className="h-2 w-2 rounded-full bg-md-green" />
+                        <span className="my-0.5 w-px flex-1 border-l border-dotted border-outline" />
+                        <span className="h-2 w-2 rounded-full bg-primary" />
+                      </span>
+                      <span className="min-w-0 flex-1 text-xs">
+                        <span className="block truncate text-on-surface-variant" title={peek.from}>{peek.from}</span>
+                        <span className="mt-1 block truncate font-medium text-on-surface" title={peek.to}>{peek.to}</span>
+                      </span>
+                    </div>
+                  )}
+                  {(peek?.load || headerActionButton) && (
+                    <div className="flex items-center justify-between gap-2 pl-4 pr-3 pb-2">
+                      {peek?.load ? (
+                        <span className={`min-w-0 truncate rounded-lg px-2.5 py-1 text-xs font-medium ${
+                          peek.load.tone === "expired" || peek.load.tone === "critical" ? "bg-md-red/10 text-error"
+                            : peek.load.tone === "warn" ? "bg-amber-50 text-amber-800"
+                            : "bg-surface-container text-on-surface"
+                        }`}>{peek.load.text}</span>
+                      ) : <span />}
+                      {headerActionButton}
+                    </div>
+                  )}
                   </div>
                 )}
               </div>
@@ -793,10 +829,13 @@ function InfoPanel({
   route,
   simState,
   simProgress,
+  compact = false,
 }: {
   route: RouteResponse;
   simState: SimState;
   simProgress: number;
+  /** Driver view on a phone: no coordinates, no internal vehicle/priority tags, no simulation status */
+  compact?: boolean;
 }) {
   const traffic = route.traffic_delay_seconds ?? 0;
   return (
@@ -815,7 +854,7 @@ function InfoPanel({
           value={traffic > 0 ? `+${formatDuration(traffic)}` : "Clear"}
           icon={traffic > 300 ? "" : ""}
         />
-        <InfoCard
+        {!compact && <InfoCard
           label="Status"
           value={
             simState === "running"
@@ -827,24 +866,24 @@ function InfoPanel({
               : "Ready"
           }
           icon={simState === "running" ? "" : simState === "finished" ? "" : ""}
-        />
+        />}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="rounded-xl bg-surface-container p-3">
           <p className="text-[11px] text-on-surface-variant font-medium mb-0.5">FROM</p>
-          <p className="text-sm text-on-surface">{route.resolved_start_address}</p>
-          <p className="text-xs text-on-surface-variant mt-1">{route.start_lat.toFixed(5)}, {route.start_lng.toFixed(5)}</p>
+          <p className="text-sm text-on-surface">{compact ? displayAddress(route.resolved_start_address) : route.resolved_start_address}</p>
+          {!compact && <p className="text-xs text-on-surface-variant mt-1">{route.start_lat.toFixed(5)}, {route.start_lng.toFixed(5)}</p>}
         </div>
         <div className="rounded-xl bg-surface-container p-3">
           <p className="text-[11px] text-on-surface-variant font-medium mb-0.5">TO</p>
-          <p className="text-sm text-on-surface">{route.resolved_end_address}</p>
-          <p className="text-xs text-on-surface-variant mt-1">{route.end_lat.toFixed(5)}, {route.end_lng.toFixed(5)}</p>
+          <p className="text-sm text-on-surface">{compact ? displayAddress(route.resolved_end_address) : route.resolved_end_address}</p>
+          {!compact && <p className="text-xs text-on-surface-variant mt-1">{route.end_lat.toFixed(5)}, {route.end_lng.toFixed(5)}</p>}
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Tag icon="" label={route.vehicle_type} />
-        {route.vehicle_id && <Tag icon="" label={route.vehicle_id} />}
-        <Tag icon="" label={route.priority} />
+        {!compact && <Tag icon="" label={route.vehicle_type} />}
+        {!compact && route.vehicle_id && <Tag icon="" label={route.vehicle_id} />}
+        {!compact && <Tag icon="" label={route.priority} />}
         {route.load_weight && <Tag icon="" label={`${route.load_weight} kg`} />}
         {route.avoid && route.avoid.length > 0 && <Tag icon="" label={`Avoid: ${route.avoid.join(", ")}`} />}
         {route.total_alternatives > 1 && <Tag icon="" label={`${route.total_alternatives} routes`} />}

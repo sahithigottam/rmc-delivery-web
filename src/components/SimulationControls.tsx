@@ -37,6 +37,8 @@ interface SimulationControlsProps {
   gpsTrafficMsg: string | null;
   onGpsStart: () => void;
   onGpsStop: () => void;
+  /** "switch" shows only the Simulation/GPS switch; "details" shows everything else */
+  part?: "all" | "switch" | "details";
 }
 
 const SPEED_OPTIONS = [
@@ -73,6 +75,7 @@ export default function SimulationControls({
   gpsTrafficMsg,
   onGpsStart,
   onGpsStop,
+  part = "all",
 }: SimulationControlsProps) {
   const pct = Math.round(progress * 100);
   const isActive = simState === "running" || simState === "paused";
@@ -92,7 +95,7 @@ export default function SimulationControls({
   return (
     <div className="space-y-3">
       {/* Mode toggle */}
-      <div className="flex items-center gap-2 p-2 rounded-xl bg-surface-container border border-outline-variant">
+      {part !== "details" && <div className="flex items-center gap-2 p-2 rounded-xl bg-surface-container border border-outline-variant">
         <span className={`flex-1 text-sm font-semibold ${!gpsMode ? "text-primary" : "text-on-surface-variant"}`}>
           Simulation
         </span>
@@ -111,10 +114,10 @@ export default function SimulationControls({
         <span className={`flex-1 text-right text-sm font-semibold ${gpsMode ? "text-primary" : "text-on-surface-variant"}`}>
           GPS
         </span>
-      </div>
+      </div>}
 
       {/* ── GPS MODE ── */}
-      {gpsMode && (
+      {gpsMode && part !== "switch" && (
         <div className="space-y-2">
           {/* Status row */}
           <div className="flex items-center gap-2">
@@ -209,7 +212,7 @@ export default function SimulationControls({
       )}
 
       {/* ── SIMULATION MODE ── */}
-      {!gpsMode && (
+      {!gpsMode && part !== "switch" && (
         <div className="space-y-3">
           <p className="text-[11px] text-on-surface-variant bg-surface-container rounded-lg px-3 py-2">
             Demo only — shown on this screen and not sent to the office. Use Real GPS to track the trip.

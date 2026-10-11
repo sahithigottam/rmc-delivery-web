@@ -21,7 +21,72 @@ function load(relative, mocks = {}) {
   return module.exports;
 }
 
-const { nextTripAction, liveTripSummary } = load("lib/liveTripSummary.ts");
+const { nextTripAction, liveTripSummary, peekDetails, displayAddress } = load("lib/liveTripSummary.ts");
+
+test("the collapsed card shows the route and the load window only when they are meaningful", () => {
+  const base = { start_address: "Kazipet Plant", end_address: "Rahamatnagar, Main Rd" };
+  const fresh = peekDetails({ ...base, status: "in_progress", load_minutes_remaining: 31.6, load_status: "fresh", load_max_life_minutes: 90 });
+  assert.equal(fresh.from, "Kazipet Plant");
+  assert.equal(fresh.to, "Rahamatnagar, Main Rd");
+  assert.deepEqual({ ...peekDetails({ ...base, status: "in_progress", load_minutes_remaining: 80, load_max_life_minutes: 90 }).load },
+    { text: "Load window 80 min", tone: "ok" });
+  assert.deepEqual({ ...fresh.load }, { text: "Load window 32 min \u00b7 Warning", tone: "warn" }, "35% of life left is amber");
+  assert.deepEqual({ ...peekDetails({ ...base, status: "in_progress", load_minutes_remaining: 8, load_status: "critical" }).load },
+    { text: "Load window 8 min \u00b7 Critical", tone: "critical" });
+  assert.deepEqual({ ...peekDetails({ ...base, status: "paused", load_minutes_remaining: 45, load_status: "warning" }).load },
+    { text: "Load window 45 min \u00b7 Warning", tone: "warn" });
+  const expired = peekDetails({ ...base, status: "in_progress", load_minutes_remaining: -4, load_status: "expired" });
+  assert.deepEqual({ ...expired.load }, { text: "Load window 0 min \u00b7 Expired", tone: "expired" });
+  assert.equal(peekDetails({ ...base, status: "in_progress", load_minutes_remaining: 0 }).load.tone, "expired");
+  assert.equal(peekDetails({ ...base, status: "pending", load_minutes_remaining: 30 }).load, null);
+  assert.equal(peekDetails({ ...base, status: "completed", load_minutes_remaining: 30 }).load, null);
+  assert.equal(peekDetails({ ...base, status: "in_progress", load_minutes_remaining: null }).load, null);
+  assert.equal(peekDetails({ ...base, status: "in_progress" }).load, null);
+});
+
+test("the load colour follows the number even when the backend status says fresh", () => {
+  const base = { start_address: "A", end_address: "B", status: "in_progress" };
+  const oneMinute = peekDetails({ ...base, load_minutes_remaining: 1, load_status: "fresh", load_max_life_minutes: 90 }).load;
+  assert.equal(oneMinute.tone, "critical");
+  assert.equal(oneMinute.text, "Load window 1 min \u00b7 Critical");
+  assert.equal(peekDetails({ ...base, load_minutes_remaining: 1 }).load.tone, "critical", "no status and no maximum");
+  assert.equal(peekDetails({ ...base, load_minutes_remaining: 30 }).load.tone, "warn", "no maximum: under 40 min");
+  assert.equal(peekDetails({ ...base, load_minutes_remaining: 60 }).load.tone, "ok");
+  assert.equal(peekDetails({ ...base, load_minutes_remaining: 18, load_max_life_minutes: 90 }).load.tone, "critical", "20% or less of life left");
+});
+
+test("Plus Codes are hidden from displayed addresses but real addresses are untouched", () => {
+  assert.equal(displayAddress("XGH6+6QX, Main Rd, Rahamatnagar, Telangana"), "Main Rd, Rahamatnagar, Telangana");
+  assert.equal(displayAddress("XGH6+6QX Main Rd, Rahamatnagar"), "Main Rd, Rahamatnagar");
+  assert.equal(displayAddress("Main Rd, Rahamatnagar"), "Main Rd, Rahamatnagar");
+  assert.equal(displayAddress("XGH6+6QX"), "XGH6+6QX", "never leaves an empty address");
+  assert.equal(displayAddress("12 Plus+Street, Kazipet"), "12 Plus+Street, Kazipet");
+  const peek = peekDetails({ status: "in_progress", start_address: "Plant", end_address: "XGH6+6QX, Main Rd" });
+  assert.equal(peek.to, "Main Rd");
+});
+
+test("the phone route information drops coordinates and internal vehicle tags", () => {
+  const source = fs.readFileSync(path.join(root, "src", "components", "MainApp.tsx"), "utf8");
+  assert.match(source, /<InfoPanel compact route=\{shownRoute\}/);
+  assert.match(source, /\{!compact && <p className="text-xs text-on-surface-variant mt-1">\{route\.start_lat/);
+  assert.match(source, /\{!compact && <p className="text-xs text-on-surface-variant mt-1">\{route\.end_lat/);
+  assert.match(source, /\{!compact && <Tag icon="" label=\{route\.vehicle_type\} \/>\}/);
+  assert.match(source, /\{!compact && <Tag icon="" label=\{route\.priority\} \/>\}/);
+  const desktop = source.slice(source.indexOf('<div className="hidden lg:block lg:flex-[0_0_35%]'));
+  assert.doesNotMatch(desktop.slice(0, 700), /compact/, "the desktop panel under the map is unchanged");
+});
+
+test("the collapsed card keeps its toggle and action as separate buttons below the headline", () => {
+  const source = fs.readFileSync(path.join(root, "src", "components", "MainApp.tsx"), "utf8");
+  const card = source.slice(source.indexOf('aria-label="Show details"'));
+  const toggleEnd = card.indexOf("</button>");
+  const route = card.indexOf("{peek.from}");
+  const load = card.indexOf("{peek.load.text}");
+  const action = card.indexOf("{headerActionButton}");
+  assert.ok(toggleEnd < route && route < load && load < action, "headline, then route, then load window and action");
+  assert.match(card, /bg-md-red\/10 text-error/);
+  assert.match(source, /const peek = activeTab === "trip" && !viewedTrip && trip \? peekDetails\(trip\) : null/);
+});
 
 test("next action follows trip stage and whether device GPS is running", () => {
   assert.deepEqual({ ...nextTripAction("pending", false) }, { type: "begin", label: "Start Trip" });
@@ -196,7 +261,7 @@ test("header and collapsed bar both show the summary line, stage and one separat
   const header = source.slice(source.indexOf("lg:hidden flex h-16"), source.indexOf("Shrink panel"));
   assert.ok(header.indexOf("{headerActionButton}") > header.indexOf("</button>"));
   assert.match(source, /flex min-h-12 flex-shrink-0 items-center whitespace-nowrap px-1/);
-  assert.match(source, /action\.type === "end" \? "border border-primary text-primary"/);
+  assert.match(source, /action\.type === "end" \? "bg-md-green text-white" : "bg-primary text-on-primary"/);
   assert.doesNotMatch(source, /\{!headerAction && \(/, "the expand chevron stays visible next to the action");
   assert.match(pill.slice(0, toggleEnd), /M6 15l6-6 6 6/, "the collapsed bar keeps its expand chevron inside the toggle");
 });

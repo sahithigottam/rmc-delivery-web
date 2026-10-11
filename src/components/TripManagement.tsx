@@ -6,7 +6,6 @@ import { beginTrip, pauseTrip, resumeTrip, completeTrip, cancelTrip } from "@/li
 import { showToast } from "./Toast";
 import TruckIcon from "./TruckIcon";
 import type { TripActionRequest } from "@/lib/liveTripSummary";
-import { isNearSite } from "@/lib/nearSite";
 import { applyReasonChip, reasonChips } from "@/lib/completionReasons";
 import { formatInZone, isEtaStale, timeZoneForTrip, zoneLabel, zonedInputToUtcIso } from "@/lib/time";
 
@@ -426,7 +425,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
                   onClick={() => setShowBeginForm(false)}
                   className="px-4 py-2 rounded-xl border border-outline-variant text-sm hover:bg-surface-container-low transition-colors"
                 >
-                  Cancel
+                  Back
                 </button>
               </div>
             </div>
@@ -441,9 +440,9 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
               <button
                 onClick={handleCancel}
                 disabled={loading}
-                className="px-4 py-2 rounded-xl border border-md-red text-md-red text-sm font-medium hover:bg-md-red/10 transition-colors disabled:opacity-50"
+                className="px-4 py-2 rounded-xl bg-error text-white text-sm font-semibold whitespace-nowrap hover:bg-error/90 transition-colors disabled:opacity-50"
               >
-                 Cancel
+                 Cancel trip
               </button>
             </div>
           )}
@@ -465,16 +464,14 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
               <button
                 onClick={handlePause}
                 disabled={loading}
-                className="flex-1 py-2 rounded-xl border border-outline-variant text-sm font-medium hover:bg-surface-container transition-colors disabled:opacity-50"
+                className="flex-1 py-2 rounded-xl bg-md-yellow text-on-surface text-sm font-semibold hover:bg-md-yellow/90 transition-colors disabled:opacity-50"
               >
                  Pause
               </button>
               <button
                 onClick={() => { setShowCompleteForm(t => !t); driverControls?.onFormOpen(); }}
                 disabled={loading}
-                className={`flex-1 py-2 rounded-xl text-sm disabled:opacity-50 ${driverControls && !isNearSite(driverPosition, trip)
-                  ? "border border-outline-variant font-medium text-on-surface-variant"
-                  : "bg-md-green text-white font-semibold hover:shadow-md transition-all"}`}
+                className="flex-1 py-2 rounded-xl bg-md-green text-white text-sm font-semibold hover:shadow-md transition-all disabled:opacity-50"
               >
                  End Trip
               </button>
@@ -492,9 +489,9 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
               <button
                 onClick={handleCancel}
                 disabled={loading}
-                className="flex-1 py-2 rounded-xl border border-md-red text-md-red text-sm font-medium hover:bg-md-red/10 transition-colors disabled:opacity-50"
+                className="flex-1 py-2 rounded-xl bg-error text-white text-sm font-semibold whitespace-nowrap hover:bg-error/90 transition-colors disabled:opacity-50"
               >
-                 Cancel
+                 Cancel trip
               </button>
             </div>
           )}

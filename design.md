@@ -81,9 +81,13 @@ Nav tabs, sheet header buttons, card action buttons: default, hover (where suppo
 `:focus-visible` ring (existing global rule), active, disabled where applicable.
 Loading / error / success states stay with the existing components that own them.
 
-## CTA voice (unchanged)
+## CTA voice
 Primary: filled `bg-primary text-on-primary rounded-xl`. Secondary: outline
 `border-outline-variant rounded-xl`. Destructive: `md-red` outline, filled only on confirm.
+Live Trip driver actions are the exception, because faint tints and outlines read
+as white on the lavender card: forward actions (Start Trip, Resume, End Trip) are
+solid `bg-md-green text-white`; Pause is solid amber `bg-md-yellow`; Cancel trip is
+solid `bg-error text-white`. Red is used only for cancelling the trip.
 
 ## What pages MUST share
 Header wordmark, accent colour and placement, Google Sans, button voice, the
@@ -115,9 +119,16 @@ while the full sheet covers the map so lowering it restores usable bounds.
 - An estimated arrival that has already passed (after a one-minute grace) is
   shown as "ETA outdated", never as a time, because the backend only refreshes
   it on a successful traffic check. No replacement time is guessed.
-- GPS/simulation settings sit above the active trip card, outside More details,
-  with a Simulation/GPS switch. Switching modes stops the previous mode;
-  starting GPS still requires the explicit Start GPS action.
+- Only the Simulation/GPS switch sits above the active trip card. The rest of
+  the tracking settings (status, freshness, speed, progress, start/stop) live
+  under More details. Switching modes stops the previous mode; starting GPS
+  still requires the explicit Start GPS action.
+- The collapsed trip card shows the headline, a dotted From/To route, a load
+  window chip and the stage action. The load chip colour follows the minutes
+  left (the load timer's thresholds), not only the backend status. Plus Codes
+  are hidden from displayed addresses.
+- On phones the route information drops raw coordinates, vehicle id/type,
+  priority and the simulation status card. The desktop panel is unchanged.
 - From/to addresses remain compactly visible. Secondary trip history and route
   information share one More details section.
   Only turn-by-turn steps retain their own accordion. Tracking settings scroll
