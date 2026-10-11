@@ -25,6 +25,44 @@ body {
   height: 100dvh;
 }
 
+.trip-accordion {
+  @apply rounded-xl border border-outline-variant bg-surface shadow-sm;
+}
+
+.trip-accordion > summary {
+  @apply min-h-12 cursor-pointer gap-3 rounded-xl px-3;
+  list-style: none;
+}
+
+.trip-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.trip-accordion > summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.trip-accordion[open] > summary::after {
+  transform: rotate(225deg);
+}
+
+.trip-accordion > :not(summary) {
+  @apply mx-3 mb-3;
+}
+
+@media (hover: hover) {
+  .trip-accordion > summary:hover {
+    @apply bg-surface-container;
+  }
+}
+
 html,
 body {
   overscroll-behavior: none;

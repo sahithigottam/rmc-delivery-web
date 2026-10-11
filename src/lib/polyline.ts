@@ -57,6 +57,41 @@ export function haversine(
   return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+/** Project onto the closest road segment, rather than using straight-line distance to the end. */
+export function remainingRoute(
+  points: [number, number][],
+  position: [number, number],
+  maxOffsetKm = 0.15,
+): { points: [number, number][]; distanceKm: number } | null {
+  if (points.length < 2) return null;
+  const scale = Math.cos(position[0] * Math.PI / 180);
+  let closestKm = Infinity;
+  let segment = 0;
+  let projection: [number, number] = points[0];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i];
+    const b = points[i + 1];
+    const dx = (b[1] - a[1]) * scale;
+    const dy = b[0] - a[0];
+    const lengthSquared = dx * dx + dy * dy;
+    const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
+      (((position[1] - a[1]) * scale) * dx + (position[0] - a[0]) * dy) / lengthSquared,
+    ));
+    const candidate = lerp(a, b, t);
+    const offset = haversine(position, candidate);
+    if (offset < closestKm) {
+      closestKm = offset;
+      segment = i;
+      projection = candidate;
+    }
+  }
+  if (closestKm > maxOffsetKm) return null;
+  const remaining = [projection, ...points.slice(segment + 1)];
+  let distanceKm = 0;
+  for (let i = 1; i < remaining.length; i++) distanceKm += haversine(remaining[i - 1], remaining[i]);
+  return { points: remaining, distanceKm };
+}
+
 /**
  * Linearly interpolate between two [lat, lng] points.
  */

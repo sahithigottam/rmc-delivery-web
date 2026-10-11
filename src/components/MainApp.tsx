@@ -1,12 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getActiveTrips, getTrip, getRoute } from "@/lib/api";
 import { formatInZone, timeZoneForTrip } from "@/lib/time";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useGpsTracking } from "@/hooks/useGpsTracking";
 import { useTripStream } from "@/hooks/useTripStream";
+import { decodePolyline, remainingRoute } from "@/lib/polyline";
+import DriverVoiceToggle from "@/components/DriverVoiceToggle";
 import SimulationControls from "@/components/SimulationControls";
 import TripManagement from "@/components/TripManagement";
 import TripEventLog from "@/components/TripEventLog";
@@ -35,6 +37,8 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   const tabs = availableTabs(capabilities);
   const [route, setRoute] = useState<RouteResponse | null>(null);
   const [trip, setTrip] = useState<TripResponse | null>(null);
+  const activeTripIdRef = useRef<number | null>(null);
+  activeTripIdRef.current = trip?.id ?? null;
   const [viewedTrip, setViewedTrip] = useState<TripResponse | null>(null);
   const [viewedRoute, setViewedRoute] = useState<RouteResponse | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>(tabs[0] ?? "plants");
@@ -57,11 +61,22 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   };
 
   // Simulation mode — on-screen demo only, never reported to the backend
-  const sim = useSimulation(route);
+  const currentRoute = useMemo(() => {
+    if (!route || trip?.route_id !== route.id ||
+        (trip.status !== "in_progress" && trip.status !== "paused") || !trip.current_polyline) return route;
+    return {
+      ...route,
+      polyline: trip.current_polyline,
+      route_steps: trip.current_polyline === route.polyline ? route.route_steps : undefined,
+      distance_meters: trip.remaining_distance_meters ?? route.distance_meters,
+      duration_seconds: trip.remaining_duration_seconds ?? route.duration_seconds,
+    };
+  }, [route, trip?.route_id, trip?.status, trip?.current_polyline, trip?.remaining_distance_meters, trip?.remaining_duration_seconds]);
+  const sim = useSimulation(currentRoute);
 
   // Real GPS mode — uses device location
   const gps = useGpsTracking(
-    route,
+    currentRoute,
     gpsMode && trip?.status === "in_progress" ? trip.id : null,
     gpsMode && trip?.status === "in_progress",
   );
@@ -109,8 +124,17 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   }, [capabilities.can_operate_trips]);
 
   const handleTripUpdate = useCallback((updatedTrip: TripResponse) => {
-    setTrip(updatedTrip);
-    if (updatedTrip.status !== "in_progress") {
+    setTrip((current) => {
+      if (!current || current.id !== updatedTrip.id ||
+          Date.parse(updatedTrip.updated_at) < Date.parse(current.updated_at)) return current;
+      return updatedTrip;
+    });
+    setViewedTrip((current) => {
+      if (!current || current.id !== updatedTrip.id ||
+          Date.parse(updatedTrip.updated_at) < Date.parse(current.updated_at)) return current;
+      return updatedTrip;
+    });
+    if (updatedTrip.id === activeTripIdRef.current && updatedTrip.status !== "in_progress") {
       setGpsMode(false);
       const finished = updatedTrip.status === "completed" || updatedTrip.status === "cancelled";
       if (finished && localStorage.getItem(GPS_TRIP_KEY) === String(updatedTrip.id)) {
@@ -145,7 +169,13 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
 
   const startGps = () => {
     if (trip) localStorage.setItem(GPS_TRIP_KEY, String(trip.id));
+    setSheet("half");
     gps.start();
+  };
+  const startDriverGps = () => {
+    sim.stop();
+    setGpsMode(true);
+    startGps();
   };
   const stopGps = () => {
     localStorage.removeItem(GPS_TRIP_KEY);
@@ -159,6 +189,13 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   const activeTruckPosition = gpsMode
     ? gps.gpsPosition ?? tripPosition
     : sim.truckPosition ?? tripPosition;
+  const roadRemainingKm = useMemo(() => {
+    if (currentRoute?.polyline && gps.gpsPosition) {
+      const remaining = remainingRoute(decodePolyline(currentRoute.polyline), gps.gpsPosition);
+      if (remaining) return remaining.distanceKm;
+    }
+    return trip?.remaining_distance_meters != null ? trip.remaining_distance_meters / 1000 : null;
+  }, [currentRoute?.polyline, gps.gpsPosition, trip?.remaining_distance_meters]);
 
   // Traffic result from the trip monitor, shown while in Real GPS mode
   const [tripTrafficMsg, setTripTrafficMsg] = useState<string | null>(null);
@@ -175,34 +212,14 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   }, []);
 
   /* Trip monitor: refreshes trip details and reports the backend's traffic checks */
-  const { connected } = useTripStream({
-    tripId: trip?.id ?? null,
-    enabled: trip?.status === "in_progress" || trip?.status === "paused",
+  const monitoredTrip = viewedTrip ?? trip;
+  const { connected, error: tripRefreshError, discardPendingUpdates } = useTripStream({
+    tripId: monitoredTrip?.id ?? null,
+    enabled: monitoredTrip?.status === "pending" || monitoredTrip?.status === "in_progress" || monitoredTrip?.status === "paused",
     onTripUpdate: handleTripUpdate,
     onTrafficOk: () => showTripTrafficMsg("✅ Traffic OK", 4000),
     onReroute: (notice) => showTripTrafficMsg(`⚠️ ${notice.reason}`),
   });
-
-  // Keep the drawn route in step with the trip's current (possibly rerouted) path
-  const tripPolyline = trip?.status === "in_progress" || trip?.status === "paused"
-    ? trip.current_polyline
-    : undefined;
-  const tripRemainingM = trip?.remaining_distance_meters;
-  const tripRemainingS = trip?.remaining_duration_seconds;
-  useEffect(() => {
-    if (!tripPolyline) return;
-    setRoute((current) => {
-      if (!current || current.polyline === tripPolyline) return current;
-      return {
-        ...current,
-        polyline: tripPolyline,
-        // Directions belong to the old path; the trip API does not return new ones
-        route_steps: undefined,
-        distance_meters: tripRemainingM ?? current.distance_meters,
-        duration_seconds: tripRemainingS ?? current.duration_seconds,
-      };
-    });
-  }, [tripPolyline, tripRemainingM, tripRemainingS]);
 
   /* -- Dispatch flow -- */
   const handleDispatched = useCallback(async (resp: DispatchResponse) => {
@@ -241,13 +258,13 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
   const shownTrip = viewedTrip ?? trip;
   // A trip opened from the Trips list shows its own route and no live animation
   const mapRoute = viewedTrip ? viewedRoute : route;
-  const shownRoute = mapRoute;
+  const shownRoute = viewedTrip ? viewedRoute : currentRoute;
   let summary = "Dispatch a delivery";
   if (activeTab === "trip") {
     if (gpsMode) {
       summary =
         gps.gpsState === "active"
-          ? `${gps.remainingKm.toFixed(1)} km left${gps.gpsSpeed != null ? ` \u00b7 ${gps.gpsSpeed} km/h` : ""}`
+          ? `${roadRemainingKm != null ? `${roadRemainingKm.toFixed(1)} km left` : "Distance updating"}${gps.gpsSpeed != null ? ` \u00b7 ${gps.gpsSpeed} km/h` : ""}`
           : gps.gpsState === "error"
           ? gps.gpsError ?? "GPS error"
           : "GPS not started";
@@ -277,6 +294,23 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
         )}
         <AuthControls />
       </header>
+
+      {activeTab === "trip" && shownTrip && (
+        <div aria-label="Live trip controls" className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-outline-variant bg-surface px-3 py-1">
+          <span className="min-w-0 truncate text-sm font-medium">Trip #{shownTrip.id}</span>
+          <DriverVoiceToggle
+            key={shownTrip.id}
+            tripId={shownTrip.id}
+            status={shownTrip.status}
+            active={activeTab === "trip"}
+            remainingKm={viewedTrip
+              ? viewedTrip.remaining_distance_meters != null ? viewedTrip.remaining_distance_meters / 1000 : null
+              : gpsMode ? roadRemainingKm : sim.simState !== "idle" ? sim.remainingKm : roadRemainingKm}
+            trafficMessage={viewedTrip ? null : trafficMsg}
+            gpsError={!viewedTrip && gpsMode ? gps.gpsError : null}
+          />
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex flex-1 flex-col lg:flex-row min-h-0 overflow-hidden">
@@ -442,8 +476,49 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                         </button>
                       </div>
                     )}
+                    {!viewedTrip && trip?.status === "in_progress" && (
+                      <section aria-label="GPS and simulation settings" className="space-y-2">
+                        <h3 className="text-sm font-medium">GPS and simulation settings</h3>
+                        <SimulationControls
+                          simState={sim.simState}
+                          progress={sim.progress}
+                          remainingKm={sim.remainingKm}
+                          trafficMsg={sim.trafficMsg}
+                          speedMultiplier={sim.speedMultiplier}
+                          currentSpeed={sim.currentSpeed}
+                          onSpeedChange={sim.setSpeedMultiplier}
+                          onToggle={sim.toggle}
+                          onStop={sim.stop}
+                          gpsMode={gpsMode}
+                          onGpsModeChange={(on) => {
+                            setGpsMode(on);
+                            if (on) sim.stop();
+                            else stopGps();
+                          }}
+                          gpsState={gps.gpsState}
+                          gpsAccuracy={gps.gpsAccuracy}
+                          gpsSpeed={gps.gpsSpeed}
+                          gpsError={gps.gpsError}
+                          gpsRemainingKm={roadRemainingKm}
+                          gpsLastFixAt={gps.lastFixAt}
+                          gpsLastSentAt={gps.lastSentAt}
+                          gpsPendingCount={gps.pendingCount}
+                          gpsWakeLockActive={gps.wakeLockActive}
+                          gpsTrafficMsg={tripTrafficMsg}
+                          onGpsStart={startGps}
+                          onGpsStop={stopGps}
+                        />
+                      </section>
+                    )}
                     <TripManagement
                       trip={viewedTrip ?? trip}
+                      driverControls={!viewedTrip ? {
+                        gpsState: gpsMode ? gps.gpsState : "idle",
+                        gpsError: gps.gpsError,
+                        remainingKm: roadRemainingKm,
+                        onStartGps: startDriverGps,
+                        onFormOpen: () => setSheet("full"),
+                      } : undefined}
                       driverPosition={
                         viewedTrip
                           ? viewedTrip.current_lat != null && viewedTrip.current_lng != null
@@ -455,62 +530,36 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                       }
                       driverAccuracyM={!viewedTrip && gpsMode && gps.gpsPosition ? gps.gpsAccuracy : null}
                       onTripUpdated={(updated) => {
-                        if (viewedTrip && updated.id === viewedTrip.id) setViewedTrip(updated);
-                        else setTrip(updated);
+                        discardPendingUpdates();
+                        handleTripUpdate(updated);
                       }}
                     />
+                    {tripRefreshError && <p role="alert" className="text-xs text-error">{tripRefreshError}</p>}
                     {!viewedTrip && liveTrip && trip && (
                       <DriverLocationFreshness positionAt={trip.current_position_at} />
                     )}
+                    <details className="trip-accordion">
+                      <summary className="min-h-12 flex items-center cursor-pointer text-sm font-medium text-primary">More details</summary>
+                      <div className="space-y-4">
+                      <h3 className="text-sm font-medium">Trip history</h3>
                     <TripEventLog
                       tripId={(viewedTrip ?? trip)?.id ?? null}
                       live={!viewedTrip && liveTrip}
                     />
                     {/* Below lg the route info lives in the sheet; lg+ shows it under the map */}
-                    <div className="lg:hidden -mx-3">
+                    <div className="lg:hidden">
+                      <h3 className="text-sm font-medium">Route information</h3>
                       {shownRoute ? (
                         <InfoPanel route={shownRoute} simState={viewedTrip ? "idle" : sim.simState} simProgress={viewedTrip ? 0 : sim.progress} />
                       ) : shownTrip ? (
                         <TripInfoPanel trip={shownTrip} />
                       ) : null}
                     </div>
+                      </div>
+                    </details>
                   </div>
                 )}
               </div>
-
-              {activeTab === "trip" && !viewedTrip && trip?.status === "in_progress" && (
-                <div className="border-t border-outline-variant p-3 lg:p-4 bg-surface flex-shrink-0">
-                  <SimulationControls
-                    simState={sim.simState}
-                    progress={sim.progress}
-                    remainingKm={sim.remainingKm}
-                    trafficMsg={sim.trafficMsg}
-                    speedMultiplier={sim.speedMultiplier}
-                    currentSpeed={sim.currentSpeed}
-                    onSpeedChange={sim.setSpeedMultiplier}
-                    onToggle={sim.toggle}
-                    onStop={sim.stop}
-                    gpsMode={gpsMode}
-                    onGpsModeChange={(on) => {
-                      setGpsMode(on);
-                      if (on) sim.stop();
-                      else stopGps();
-                    }}
-                    gpsState={gps.gpsState}
-                    gpsAccuracy={gps.gpsAccuracy}
-                    gpsSpeed={gps.gpsSpeed}
-                    gpsError={gps.gpsError}
-                    gpsRemainingKm={gps.remainingKm}
-                    gpsLastFixAt={gps.lastFixAt}
-                    gpsLastSentAt={gps.lastSentAt}
-                    gpsPendingCount={gps.pendingCount}
-                    gpsWakeLockActive={gps.wakeLockActive}
-                    gpsTrafficMsg={tripTrafficMsg}
-                    onGpsStart={startGps}
-                    onGpsStop={stopGps}
-                  />
-                </div>
-              )}
             </aside>
 
             {/* Map + info */}
@@ -518,6 +567,9 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
               <div className="relative isolate flex-1 min-h-0 lg:flex-[0_0_65%]">
                 <MapView
                   route={mapRoute}
+                  remainingPolyline={viewedTrip ? viewedTrip.current_polyline : currentRoute?.polyline}
+                  followDriver={activeTab === "trip" && !viewedTrip && liveTrip &&
+                    (gpsMode ? gps.gpsState === "active" : sim.simState === "running" || tripPosition !== null)}
                   simState={viewedTrip ? "idle" : gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
                   simProgress={sim.progress}
                   truckPosition={viewedTrip
@@ -542,10 +594,16 @@ export default function Home({ capabilities }: { capabilities: CurrentUserCapabi
                     </div>
                   </div>
                 )}
+                {mapRoute && (
+                  <div className="pointer-events-none absolute top-3 right-3 z-[1000] rounded-lg bg-surface/95 px-2 py-1 text-xs text-on-surface-variant">
+                    <p><span className="mr-1 inline-block h-1 w-5 bg-primary-container" />Full route</p>
+                    <p><span className="mr-1 inline-block h-1 w-5 bg-primary" />Remaining</p>
+                  </div>
+                )}
                 {!viewedTrip && <MapOverlay
                   simState={gpsMode ? (gps.gpsState === "active" ? "running" : "idle") : sim.simState}
                   progress={sim.progress}
-                  remainingKm={gpsMode ? gps.remainingKm : sim.remainingKm}
+                  remainingKm={gpsMode ? roadRemainingKm : sim.remainingKm}
                   destination={mapRoute?.resolved_end_address ?? ""}
                   trafficMsg={trafficMsg}
                   currentSpeed={gpsMode ? (gps.gpsSpeed ?? 0) : sim.currentSpeed}
@@ -740,10 +798,10 @@ function InfoPanel({
         </div>
       )}
       {route.route_steps && route.route_steps.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-on-surface-variant mb-2">
+        <details className="trip-accordion">
+          <summary className="min-h-12 flex items-center cursor-pointer text-xs font-medium text-on-surface-variant mb-2">
             Turn-by-turn ({route.route_steps.length} steps)
-          </p>
+          </summary>
           <div className="max-h-[200px] overflow-y-auto space-y-0.5 pr-1 sidebar-scroll">
             {route.route_steps.map((step, i) => (
               <div
@@ -760,7 +818,7 @@ function InfoPanel({
               </div>
             ))}
           </div>
-        </div>
+        </details>
       )}
     </div>
   );

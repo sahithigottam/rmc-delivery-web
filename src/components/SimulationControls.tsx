@@ -29,7 +29,7 @@ interface SimulationControlsProps {
   gpsAccuracy: number | null;
   gpsSpeed: number | null;
   gpsError: string | null;
-  gpsRemainingKm: number;
+  gpsRemainingKm: number | null;
   gpsLastFixAt?: number | null;
   gpsLastSentAt?: number | null;
   gpsPendingCount?: number;
@@ -93,22 +93,24 @@ export default function SimulationControls({
     <div className="space-y-3">
       {/* Mode toggle */}
       <div className="flex items-center gap-2 p-2 rounded-xl bg-surface-container border border-outline-variant">
-        <button
-          onClick={() => onGpsModeChange(false)}
-          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            !gpsMode ? "bg-primary text-on-primary shadow-sm" : "text-on-surface-variant hover:bg-surface-container-high"
-          }`}
-        >
+        <span className={`flex-1 text-sm font-semibold ${!gpsMode ? "text-primary" : "text-on-surface-variant"}`}>
           Simulation
-        </button>
+        </span>
         <button
-          onClick={() => onGpsModeChange(true)}
-          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            gpsMode ? "bg-md-green text-white shadow-sm" : "text-on-surface-variant hover:bg-surface-container-high"
-          }`}
+          type="button"
+          role="switch"
+          aria-label="Use GPS instead of simulation"
+          aria-checked={gpsMode}
+          onClick={() => onGpsModeChange(!gpsMode)}
+          className="flex h-12 w-16 shrink-0 items-center justify-center rounded-lg hover:bg-surface-container-high active:bg-surface-container-high focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
-          📍 Real GPS
+          <span aria-hidden="true" className={`flex h-7 w-12 items-center rounded-full p-1 ${gpsMode ? "bg-primary" : "bg-outline"}`}>
+            <span className={`h-5 w-5 rounded-full bg-surface ${gpsMode ? "translate-x-5" : ""}`} />
+          </span>
         </button>
+        <span className={`flex-1 text-right text-sm font-semibold ${gpsMode ? "text-primary" : "text-on-surface-variant"}`}>
+          GPS
+        </span>
       </div>
 
       {/* ── GPS MODE ── */}
@@ -133,7 +135,7 @@ export default function SimulationControls({
               {gpsState === "active" && (
                 <span className="flex items-center gap-1.5">
                   <TruckIcon size={16} />
-                  {gpsRemainingKm > 0 ? `${gpsRemainingKm.toFixed(1)} km remaining` : "Tracking active"}
+                  {gpsRemainingKm != null ? `${gpsRemainingKm.toFixed(1)} km remaining` : "Tracking active - distance updating"}
                   {gpsSpeed != null && (
                     <span className="text-xs text-on-surface-variant">· {gpsSpeed} km/h</span>
                   )}

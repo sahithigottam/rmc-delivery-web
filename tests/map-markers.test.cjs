@@ -16,17 +16,143 @@ test("map endpoints use local illustrated markers with coordinate tips and addre
   const icons = [];
   const fits = [];
   let resize;
-  const map = { removeLayer() {}, fitBounds(points, options) { fits.push({ points, options }); }, getSize: () => ({ y: 600 }) };
+  const views = [];
+  const events = {};
+  const map = {
+    removeLayer() {},
+    on(names, callback) { for (const name of names.split(" ")) events[name] = callback; },
+    project: (position) => ({ x: position[1], y: position[0] }),
+    unproject: (point) => point,
+    setView(center, zoom) { views.push({ center, zoom }); },
+    fitBounds(points, options) { fits.push({ points, options }); }, getSize: () => ({ y: 600 }),
+  };
+  const lines = [];
   const layer = () => ({
     addTo() { return this; },
     bindPopup(address) { this.address = address; return this; },
     getBounds() { return {}; },
   });
+
+  test("driver following resumes ten seconds after exploration and uses the latest GPS fix", () => {
+    const filename = path.join(__dirname, "..", "src", "components", "MapView.tsx");
+    const compiled = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText;
+    const hooks = [];
+    let index = 0;
+    let effects = [];
+    const views = [];
+    const events = {};
+    const timers = new Map();
+    let timerId = 0;
+    const layer = () => ({
+      addTo() { return this; }, bindPopup() { return this; }, setLatLng() {},
+    });
+    const map = {
+      on(names, callback) { names.split(" ").forEach((name) => { events[name] = callback; }); },
+      removeLayer() {}, fitBounds() {}, getSize: () => ({ y: 600 }),
+      project: ([lat, lng]) => ({ x: lng, y: lat }),
+      unproject: (point) => point,
+      setView(center, zoom) {
+        events.movestart?.();
+        events.zoomstart?.();
+        views.push({ center, zoom });
+      },
+    };
+    const leaflet = {
+      Icon: { Default: { prototype: {}, mergeOptions() {} } },
+      map: () => map, tileLayer: layer, polyline: layer, marker: layer,
+      icon: (options) => options, divIcon: (options) => options,
+      point: (x, y) => ({ x, y }), latLngBounds: (points) => points,
+    };
+    const memo = (callback, deps) => {
+      const slot = index++;
+      const old = hooks[slot];
+      if (!old || deps.some((dep, i) => !Object.is(dep, old.deps[i]))) {
+        hooks[slot] = { deps, value: callback() };
+      }
+      return hooks[slot].value;
+    };
+    const module = { exports: {} };
+    vm.runInNewContext(compiled, {
+      module, exports: module.exports,
+      setTimeout(callback, delay) {
+        assert.equal(delay, 10000);
+        timers.set(++timerId, callback);
+        return timerId;
+      },
+      clearTimeout(id) { timers.delete(id); },
+      window: { matchMedia: () => ({ matches: false }) },
+      ResizeObserver: class { observe() {} disconnect() {} },
+      require(id) {
+        if (id === "leaflet") return { default: leaflet };
+        if (id.endsWith(".css")) return {};
+        if (id === "@/lib/polyline") return {
+          decodePolyline: () => [[1, 2], [3, 4]], remainingRoute: (points) => ({ points }),
+        };
+        if (id === "react") return {
+          ...React,
+          useRef(value) {
+            const slot = index++;
+            if (!hooks[slot]) hooks[slot] = { current: slot === 0 ? {} : value };
+            return hooks[slot];
+          },
+          useMemo: memo,
+          useCallback: (callback, deps) => memo(() => callback, deps),
+          useEffect(callback, deps) {
+            memo(() => { effects.push(callback); return null; }, deps);
+          },
+        };
+        return require(id);
+      },
+    }, { filename });
+    const render = (followDriver, truckPosition) => {
+      index = 0;
+      effects = [];
+      module.exports.default({
+        route: null, simState: "idle", animationPoints: [], currentPointIndex: 0,
+        bottomInsetRatio: 0.55, followDriver, truckPosition,
+      });
+      effects.forEach((effect) => effect());
+    };
+    render(false, null);
+    events.movestart();
+    render(true, [1, 2]);
+    assert.equal(views.at(-1).zoom, 17);
+    const firstCount = views.length;
+    render(true, [1.1, 2.1]);
+    assert.equal(views.length, firstCount + 1);
+    assert.equal(views.at(-1).center.x, 2.1);
+    events.movestart();
+    render(true, [1.2, 2.2]);
+    assert.equal(views.length, firstCount + 1);
+    events.moveend();
+    assert.equal(views.length, firstCount + 1);
+    assert.equal(timers.size, 1);
+    events.zoomstart();
+    assert.equal(timers.size, 0);
+    events.zoomend();
+    render(true, [1.25, 2.25]);
+    assert.equal(views.length, firstCount + 1);
+    const [id, callback] = [...timers.entries()][0];
+    timers.delete(id);
+    callback();
+    assert.equal(views.at(-1).center.x, 2.25);
+    render(true, [1.2, 2.2]);
+    assert.equal(views.at(-1).center.x, 2.2);
+    events.movestart();
+    events.moveend();
+    render(false, null);
+    assert.equal(timers.size, 0);
+    render(true, [1.3, 2.3]);
+    assert.equal(views.at(-1).center.x, 2.3);
+  });
   const leaflet = {
     Icon: { Default: { prototype: {}, mergeOptions() {} } },
     map: () => map,
     tileLayer: layer,
-    polyline: layer,
+    polyline(points, options) { lines.push({ points, options }); return layer(); },
+    point: (x, y) => ({ x, y }),
     latLngBounds: (points) => points,
     icon(options) { icons.push(options); return options; },
     divIcon: (options) => options,
@@ -50,8 +176,12 @@ test("map endpoints use local illustrated markers with coordinate tips and addre
         useEffect: (effect) => effect(),
         useRef: (value) => ({ current: refIndex++ === 0 ? {} : value }),
         useCallback: (callback) => callback,
+        useMemo: (callback) => callback(),
       };
-      if (id === "@/lib/polyline") return { decodePolyline: () => [[1, 2], [3, 4]] };
+      if (id === "@/lib/polyline") return {
+        decodePolyline: () => [[1, 2], [3, 4]],
+        remainingRoute: (points) => ({ points, distanceKm: 1 }),
+      };
       return require(id);
     },
   }, { filename });
@@ -107,4 +237,21 @@ test("map endpoints use local illustrated markers with coordinate tips and addre
     bottomInsetRatio: 1,
   });
   assert.equal(fits.length, fitsBeforeFullSheet);
+  refIndex = 0;
+  module.exports.default({
+    route: {
+      id: 4, polyline: "test", start_lat: 1, start_lng: 2, end_lat: 3, end_lng: 4,
+      resolved_start_address: "Batching plant", resolved_end_address: "Job site",
+    },
+    simState: "running", truckPosition: [5, 6], animationPoints: [], currentPointIndex: 0,
+    bottomInsetRatio: 0.55, followDriver: true, remainingPolyline: "remaining",
+  });
+  assert.equal(views.at(-1).zoom, 17);
+  assert.equal(views.at(-1).center.y, 170);
+  assert.ok(lines.some(({ options }) => options.color === "#b6a1dc"));
+  assert.ok(lines.some(({ options }) => options.color === "#6750a4"));
+  events.movestart();
+  const beforeManualResize = views.length;
+  resize();
+  assert.equal(views.length, beforeManualResize);
 });

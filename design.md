@@ -100,6 +100,44 @@ sheet, without additional location buttons. Refit on layout
 changes and the first available driver position, not every GPS update; defer fitting
 while the full sheet covers the map so lowering it restores usable bounds.
 
+## Live trip map and voice
+- The currently displayed trip is refreshed even while pending or opened from the
+  trip list. Start/pause/end results invalidate older in-flight polls; older
+  timestamps cannot overwrite newer state. Refresh failures are shown explicitly.
+- The live driver panel prioritises remaining road distance, ETA, load time/status
+  and GPS status. Stage actions stay ahead of secondary content: Start Trip,
+  Start GPS, then End Trip. The existing completion flow retains succeeded/failed,
+  required failure/expired-load notes and off-site review confirmation.
+- GPS/simulation settings sit above the active trip card, outside More details,
+  with a Simulation/GPS switch. Switching modes stops the previous mode;
+  starting GPS still requires the explicit Start GPS action.
+- From/to addresses remain compactly visible. Secondary trip history and route
+  information share one More details section.
+  Only turn-by-turn steps retain their own accordion. Tracking settings scroll
+  with details rather than occupying a fixed footer. Opening start/end forms
+  expands the mobile sheet.
+- Accordions share a subtle border/shadow and a right-aligned chevron pointing
+  down when closed and up when open, with a minimum 48px header target.
+- Live trips follow the driver at zoom 17 in the uncovered map area,
+  including off-route GPS positions. Manual pan/zoom pauses following and resumes
+  it 10 seconds after the last interaction ends. Further interaction restarts the
+  wait; GPS fixes do not interrupt exploration. Non-driver route views preserve
+  manual navigation without timed recentering.
+- The original plant-to-destination route stays light purple; the remaining road
+  path is dark purple, including backend reroutes and simulation progress.
+- GPS distance uses remaining road geometry when within 150m of the path, otherwise
+  the last backend remaining-distance estimate. Unknown distance says updating;
+  it is never replaced with straight-line distance.
+- Sound is off by default and opt-in per trip. It announces trip status, GPS errors,
+  traffic/reroute messages and distance milestones at least two minutes apart.
+  Muting, leaving the trip view or unmounting cancels speech immediately.
+  Unsupported browsers and speech errors display explicit messages.
+- Sound has one stable Live Trip toolbar above the map/details area, including
+  trips opened from the list. Expanding or minimising the sheet does not cover,
+  relocate or remount the control. Switching trips resets sound to off.
+- These are status announcements, not turn-by-turn navigation. The backend currently
+  reroutes for traffic thresholds, not explicit off-route detection.
+
 ## Known exceptions
 - `html, body { overflow: hidden }` (globals.css): app shell with inner scrollers.
   Gate 34 asks for `overflow-x: clip`; kept because every scroll region is internal.

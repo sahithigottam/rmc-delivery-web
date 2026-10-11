@@ -1,8 +1,15 @@
 # RMC Delivery Route Optimizer — API Documentation
 
 > **Version:** 1.0.0  
-> **Base URL:** `http://localhost:8000/api/v1`  
-> **Interactive Docs:** [Swagger UI](http://localhost:8000/docs) · [ReDoc](http://localhost:8000/redoc)
+> **Base URL:** `https://rmc-delivery-backend2.onrender.com/api/v1`
+>
+> **Interactive Docs:** [Swagger UI](https://rmc-delivery-backend2.onrender.com/docs) · [ReDoc](https://rmc-delivery-backend2.onrender.com/redoc)
+
+Frontend requests use same-origin `/api/v1`, proxied by Next.js to Render.
+Set `BACKEND_URL=https://rmc-delivery-backend2.onrender.com` in the frontend
+environment. Leave `NEXT_PUBLIC_API_URL` absent to use the same-origin proxy,
+or set it to `/api/v1`.
+Restart the development server or redeploy after updating the proxy configuration.
 
 ---
 

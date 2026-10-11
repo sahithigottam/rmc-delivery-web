@@ -183,7 +183,7 @@ export async function startTrip(req: TripStartRequest): Promise<TripResponse> {
 }
 
 export async function getActiveTrips(): Promise<TripResponse[]> {
-  return apiFetch<TripResponse[]>("/trips/active");
+  return apiFetch<TripResponse[]>("/trips/active", { cache: "no-store" });
 }
 
 export async function getAllTrips(limit = 100): Promise<TripResponse[]> {
@@ -195,7 +195,7 @@ export async function deleteTrip(tripId: number): Promise<void> {
 }
 
 export async function getTrip(tripId: number): Promise<TripResponse> {
-  return apiFetch<TripResponse>(`/trips/${tripId}`);
+  return apiFetch<TripResponse>(`/trips/${tripId}`, { cache: "no-store" });
 }
 
 export async function getTripEvents(

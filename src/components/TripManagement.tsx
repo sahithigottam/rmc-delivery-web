@@ -14,6 +14,13 @@ interface TripManagementProps {
   driverPosition?: [number, number] | null;
   /** GPS accuracy (m) of driverPosition, when it comes from this device */
   driverAccuracyM?: number | null;
+  driverControls?: {
+    gpsState: "idle" | "requesting" | "active" | "error";
+    gpsError: string | null;
+    remainingKm: number | null;
+    onStartGps: () => void;
+    onFormOpen: () => void;
+  };
 }
 
 export const COMPLETION_RADIUS_M = 100;
@@ -64,7 +71,7 @@ function LoadTimerBar({ minutes, max }: { minutes: number; max: number }) {
   );
 }
 
-export default function TripManagement({ trip, onTripUpdated, driverPosition, driverAccuracyM }: TripManagementProps) {
+export default function TripManagement({ trip, onTripUpdated, driverPosition, driverAccuracyM, driverControls }: TripManagementProps) {
   const [loading, setLoading] = useState(false);
 
   // Begin trip state
@@ -204,7 +211,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
     <div className="space-y-3">
 
       {/*  Trip Header  */}
-      <div className="p-4 rounded-xl bg-surface-container space-y-3">
+      <div className={`${driverControls ? "p-3 flex flex-col" : "p-4"} rounded-xl bg-surface-container space-y-3`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${cfg.dot} ${trip.status === "in_progress" ? "animate-pulse" : ""}`} />
@@ -225,17 +232,16 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
           )}
         </div>
 
-        {/* Addresses */}
         <div className="text-xs text-on-surface-variant space-y-0.5">
-          <p> {trip.start_address}</p>
-          <p> {trip.end_address}</p>
+          <p className={driverControls ? "truncate" : ""} title={trip.start_address}>From: {trip.start_address}</p>
+          <p className={driverControls ? "truncate" : ""} title={trip.end_address}>To: {trip.end_address}</p>
           {trip.scheduled_at && (
             <p> Scheduled: {formatInZone(trip.scheduled_at, siteTz, "full")}</p>
           )}
         </div>
 
         {/* Route info (always visible) */}
-        <div className="grid grid-cols-3 gap-2">
+        {!driverControls && <div className="grid grid-cols-3 gap-2">
           {trip.original_distance_meters != null && (
             <div className="px-3 py-2 rounded-lg bg-surface-container-low">
               <p className="text-[11px] text-on-surface-variant">DISTANCE</p>
@@ -254,15 +260,15 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
               <p className="text-sm font-semibold text-on-surface">{trip.load_max_life_minutes ?? (trip.concrete_mix === "HE" ? 60 : trip.concrete_mix === "RE" ? 120 : 90)} min</p>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Load Timer (in-progress trips) */}
-        {isActive && trip.load_minutes_remaining != null && trip.load_max_life_minutes && (
+        {!driverControls && isActive && trip.load_minutes_remaining != null && trip.load_max_life_minutes && (
           <LoadTimerBar minutes={trip.load_minutes_remaining} max={trip.load_max_life_minutes} />
         )}
 
         {/* Load status badge */}
-        {isActive && trip.load_status && (
+        {!driverControls && isActive && trip.load_status && (
           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold capitalize ${LOAD_STATUS_STYLE[trip.load_status] ?? "bg-gray-100 text-gray-600"}`}>
             {trip.load_status}
           </span>
@@ -270,25 +276,36 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
 
         {/* Active trip metrics */}
         {isActive && (
-          <div className="grid grid-cols-2 gap-2">
-            {trip.remaining_distance_meters != null && (
+          <div className={`grid ${driverControls ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
+            {(driverControls || trip.remaining_distance_meters != null) && (
               <div className="px-3 py-2 rounded-lg bg-surface-container-low">
                 <p className="text-[11px] text-on-surface-variant">REMAINING</p>
-                <p className="text-sm font-semibold text-on-surface">{(trip.remaining_distance_meters / 1000).toFixed(1)} km</p>
+                <p className="text-sm font-semibold text-on-surface">{driverControls
+                  ? driverControls.remainingKm != null ? `${driverControls.remainingKm.toFixed(1)} km` : "Updating"
+                  : `${(trip.remaining_distance_meters! / 1000).toFixed(1)} km`}</p>
               </div>
             )}
-            {trip.remaining_duration_seconds != null && (
+            {!driverControls && trip.remaining_duration_seconds != null && (
               <div className="px-3 py-2 rounded-lg bg-surface-container-low">
                 <p className="text-[11px] text-on-surface-variant">DRIVE LEFT</p>
                 <p className="text-sm font-semibold text-on-surface">{Math.round(trip.remaining_duration_seconds / 60)} min</p>
               </div>
             )}
-            {trip.estimated_arrival && (
+            {(driverControls || trip.estimated_arrival) && (
               <div className="px-3 py-2 rounded-lg bg-surface-container-low">
                 <p className="text-[11px] text-on-surface-variant">ETA</p>
                 <p className="text-sm font-semibold text-on-surface">
-                  {formatInZone(trip.estimated_arrival, siteTz, "time")}
+                  {trip.estimated_arrival ? formatInZone(trip.estimated_arrival, siteTz, "time")
+                    : trip.remaining_duration_seconds != null ? `${Math.round(trip.remaining_duration_seconds / 60)} min` : "Updating"}
                 </p>
+              </div>
+            )}
+            {driverControls && (
+              <div className={`px-2 py-2 rounded-lg ${loadExpired ? "bg-md-red/10 text-error" : "bg-surface-container-low"}`}>
+                <p className="text-[11px]">LOAD TIME</p>
+                <p className="text-sm font-semibold">{trip.load_minutes_remaining != null
+                  ? `${Math.max(0, Math.round(trip.load_minutes_remaining))} min` : "Updating"}</p>
+                {trip.load_status && <p className="text-[11px] capitalize">{trip.load_status}</p>}
               </div>
             )}
             {trip.current_traffic_delay != null && trip.current_traffic_delay > 60 && (
@@ -296,6 +313,14 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
                 <p className="text-[11px] text-md-red">TRAFFIC DELAY</p>
                 <p className="text-sm font-semibold text-md-red">+{Math.round(trip.current_traffic_delay / 60)} min</p>
               </div>
+            )}
+            {driverControls && isActive && (
+              <p role="status" className={`text-xs ${driverControls.gpsState === "error" ? "text-error" : "text-on-surface-variant"}`}>
+                {driverControls.gpsState === "active" ? `GPS active${driverAccuracyM != null ? ` - accuracy ${Math.round(driverAccuracyM)} m` : ""}`
+                  : driverControls.gpsState === "requesting" ? "Requesting GPS location..."
+                  : driverControls.gpsState === "error" ? driverControls.gpsError ?? "GPS error"
+                  : "GPS not started on this device"}
+              </p>
             )}
           </div>
         )}
@@ -316,7 +341,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
 
       {/*  Pending: Begin Trip Form  */}
       {trip.status === "pending" && (
-        <div className="p-4 rounded-xl bg-surface-container space-y-3">
+        <div className={`${driverControls ? "sticky bottom-0 z-10" : ""} p-4 rounded-xl bg-surface-container space-y-3`}>
           <div className="flex items-center gap-2">
             <TruckIcon size={22} />
             <div>
@@ -368,10 +393,10 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
           ) : (
             <div className="flex gap-2">
               <button
-                onClick={() => setShowBeginForm(true)}
+                onClick={() => { setShowBeginForm(true); driverControls?.onFormOpen(); }}
                 className="flex-1 py-2.5 rounded-xl bg-md-green text-white font-semibold text-sm hover:shadow-md transition-all active:scale-[0.98]"
               >
-                 Begin Trip
+                 Start Trip
               </button>
               <button
                 onClick={handleCancel}
@@ -387,7 +412,14 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
 
       {/*  In-progress controls  */}
       {isActive && (
-        <div className="space-y-2">
+        <div className={`${driverControls ? "sticky bottom-0 z-10 bg-surface py-2" : ""} space-y-2`}>
+          {driverControls && trip.status === "in_progress" &&
+            (driverControls.gpsState === "idle" || driverControls.gpsState === "error") && (
+              <button type="button" onClick={driverControls.onStartGps}
+                className="w-full min-h-12 rounded-xl bg-primary text-on-primary text-sm font-semibold hover:bg-primary/90">
+                Start GPS
+              </button>
+            )}
           {trip.status === "in_progress" && (
             <div className="flex gap-2">
               <button
@@ -398,11 +430,11 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
                  Pause
               </button>
               <button
-                onClick={() => setShowCompleteForm(true)}
+                onClick={() => { setShowCompleteForm(t => !t); driverControls?.onFormOpen(); }}
                 disabled={loading}
                 className="flex-1 py-2 rounded-xl bg-md-green text-white text-sm font-semibold hover:shadow-md transition-all disabled:opacity-50"
               >
-                 Complete
+                 End Trip
               </button>
             </div>
           )}
@@ -430,7 +462,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
       {/*  Complete outcome dialog  */}
       {showCompleteForm && trip.status === "in_progress" && (
         <div className="p-4 rounded-xl border border-outline-variant bg-surface-container space-y-3">
-          <p className="text-sm font-semibold text-on-surface">Mark as Completed</p>
+          <p className="text-sm font-semibold text-on-surface">End Trip</p>
 
           <p
             role="status"
@@ -445,6 +477,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
 
           <div className="grid grid-cols-2 gap-2">
             <button
+              aria-pressed={outcomeSuccess === true}
               onClick={() => setOutcomeSuccess(true)}
               className={`py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${
                 outcomeSuccess === true
@@ -455,6 +488,7 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
                Succeeded
             </button>
             <button
+              aria-pressed={outcomeSuccess === false}
               onClick={() => setOutcomeSuccess(false)}
               className={`py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${
                 outcomeSuccess === false
@@ -473,6 +507,8 @@ export default function TripManagement({ trip, onTripUpdated, driverPosition, dr
           )}
 
           <textarea
+            aria-label={notesRequired ? "Delivery notes (required)" : "Delivery notes (optional)"}
+            aria-required={notesRequired}
             value={outcomeNotes}
             onChange={(e) => setOutcomeNotes(e.target.value)}
             placeholder={outcomeSuccess === false

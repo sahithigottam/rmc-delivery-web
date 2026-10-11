@@ -5,7 +5,7 @@ import type { SimState } from "@/types/route";
 interface MapOverlayProps {
   simState: SimState;
   progress: number;
-  remainingKm: number;
+  remainingKm: number | null;
   destination: string;
   trafficMsg: string | null;
   currentSpeed?: number;
@@ -42,7 +42,7 @@ export default function MapOverlay({
             ? `🏁 Delivered to ${destination}`
             : simState === "paused"
             ? "⏸ Paused"
-            : `🚚 En route — ${remainingKm.toFixed(1)} km remaining`}
+            : `🚚 En route — ${remainingKm != null ? `${remainingKm.toFixed(1)} km remaining` : "distance updating"}`}
         </span>
         <span className="text-xs text-on-surface-variant font-medium">
           {pct}%
@@ -67,7 +67,7 @@ export default function MapOverlay({
       {/* Metrics row */}
       <div className="flex gap-5 mt-2.5 text-xs text-on-surface-variant">
         <span>
-          Remaining: <strong className="text-on-surface">{remainingKm.toFixed(1)} km</strong>
+          Remaining: <strong className="text-on-surface">{remainingKm != null ? `${remainingKm.toFixed(1)} km` : "Updating"}</strong>
         </span>
         <span>
           Progress: <strong className="text-on-surface">{pct}%</strong>

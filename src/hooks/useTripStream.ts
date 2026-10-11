@@ -135,5 +135,9 @@ export function useTripStream({
     };
   }, [tripId, enabled, startPolling, stopPolling]);
 
-  return { connected, error, reconnect: startPolling };
+  const discardPendingUpdates = useCallback(() => {
+    generationRef.current += 1;
+  }, []);
+
+  return { connected, error, reconnect: startPolling, discardPendingUpdates };
 }

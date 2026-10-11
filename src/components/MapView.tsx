@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { decodePolyline, subsampleRoute } from "@/lib/polyline";
+import { decodePolyline, remainingRoute } from "@/lib/polyline";
 import type { RouteResponse, SimState } from "@/types/route";
 
 /* ── Fix Leaflet default icon paths in Next.js ── */
@@ -27,6 +27,8 @@ interface MapViewProps {
   currentPointIndex: number;
   /** Fraction of map height covered by the bottom sheet on small screens (0–1). */
   bottomInsetRatio?: number;
+  remainingPolyline?: string;
+  followDriver?: boolean;
 }
 
 export default function MapView({
@@ -36,6 +38,8 @@ export default function MapView({
   animationPoints,
   currentPointIndex,
   bottomInsetRatio = 0,
+  remainingPolyline,
+  followDriver = false,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const insetRef = useRef(bottomInsetRatio);
@@ -47,10 +51,41 @@ export default function MapView({
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Layer[]>([]);
   const routeLayerRef = useRef<L.Polyline | null>(null);
-  const traversedLayerRef = useRef<L.Polyline | null>(null);
   const remainingLayerRef = useRef<L.Polyline | null>(null);
   const truckMarkerRef = useRef<L.Marker | null>(null);
   const fittedRouteIdRef = useRef<number | null>(null);
+  const followRef = useRef(followDriver);
+  followRef.current = followDriver;
+  const manualViewRef = useRef(false);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearResumeTimer = useCallback(() => {
+    if (resumeTimerRef.current !== null) {
+      clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+  }, []);
+  const programmaticViewRef = useRef(false);
+  const fullPoints = useMemo(() => route?.polyline ? decodePolyline(route.polyline) : [], [route?.polyline]);
+  const currentPoints = useMemo(() => {
+    if (animationPoints.length) return animationPoints.slice(currentPointIndex);
+    const points = remainingPolyline ? decodePolyline(remainingPolyline) : fullPoints;
+    return truckPosition ? remainingRoute(points, truckPosition)?.points ?? points : points;
+  }, [animationPoints, currentPointIndex, remainingPolyline, fullPoints, truckPosition]);
+
+  const followPosition = useCallback(() => {
+    const map = mapRef.current;
+    const position = positionRef.current;
+    if (!map || !position || manualViewRef.current ||
+        (!window.matchMedia("(min-width: 64rem)").matches && insetRef.current >= 0.8)) return;
+    const mobile = !window.matchMedia("(min-width: 64rem)").matches;
+    const point = map.project(position, 17);
+    // Keep the driver above the mobile sheet or desktop status overlay.
+    const offset = mobile ? map.getSize().y * insetRef.current / 2 : Math.min(60, map.getSize().y / 4);
+    const center = map.unproject(L.point(point.x, point.y + offset), 17);
+    programmaticViewRef.current = true;
+    map.setView(center, 17, { animate: false });
+    programmaticViewRef.current = false;
+  }, []);
 
   const fitLocations = useCallback((points: L.LatLngTuple[], maxZoom: number) => {
     const map = mapRef.current;
@@ -58,14 +93,22 @@ export default function MapView({
     const mobile = !window.matchMedia("(min-width: 64rem)").matches;
     // The full sheet covers the map. Fit when it is lowered instead.
     if (mobile && insetRef.current >= 0.8) return;
+    programmaticViewRef.current = true;
     map.fitBounds(L.latLngBounds(points), {
       paddingTopLeft: [36, 96],
       paddingBottomRight: [36, mobile ? 40 + map.getSize().y * insetRef.current : 40],
       maxZoom,
+      animate: false,
     });
+    programmaticViewRef.current = false;
   }, []);
 
   const fitRoute = useCallback(() => {
+    if (followRef.current && positionRef.current) {
+      followPosition();
+      return;
+    }
+    if (manualViewRef.current) return;
     const currentRoute = routeRef.current;
     const position = positionRef.current;
     const points: L.LatLngTuple[] = currentRoute
@@ -77,7 +120,7 @@ export default function MapView({
       : [];
     if (position) points.push(position);
     fitLocations(points, currentRoute ? 16 : 15);
-  }, [fitLocations]);
+  }, [fitLocations, followPosition]);
 
   /* ── Initialize map once ── */
   useEffect(() => {
@@ -100,29 +143,50 @@ export default function MapView({
     ).addTo(map);
 
     mapRef.current = map;
+    const onManualView = () => {
+      if (programmaticViewRef.current) return;
+      clearResumeTimer();
+      manualViewRef.current = true;
+    };
+    map.on("movestart zoomstart", onManualView);
+    const resumeDriverView = () => {
+      if (programmaticViewRef.current || !followRef.current || !manualViewRef.current) return;
+      clearResumeTimer();
+      resumeTimerRef.current = setTimeout(() => {
+        resumeTimerRef.current = null;
+        if (!followRef.current) return;
+        manualViewRef.current = false;
+        followPosition();
+      }, 10_000);
+    };
+    map.on("moveend zoomend", resumeDriverView);
 
     // Panels docking/undocking and device rotation resize the container without a window resize
     const ro = new ResizeObserver(() => {
+      programmaticViewRef.current = true;
       map.invalidateSize();
+      programmaticViewRef.current = false;
       fitRoute();
     });
     ro.observe(containerRef.current);
 
     return () => {
+      clearResumeTimer();
       ro.disconnect();
       map.remove();
       mapRef.current = null;
     };
-  }, [fitRoute]);
+  }, [fitRoute, followPosition, clearResumeTimer]);
 
   useEffect(() => {
+    clearResumeTimer();
+    manualViewRef.current = false;
     fitRoute();
-  }, [bottomInsetRatio, fitRoute]);
+  }, [bottomInsetRatio, followDriver, fitRoute, clearResumeTimer]);
 
-  const hasDriverPosition = truckPosition !== null;
   useEffect(() => {
-    if (hasDriverPosition) fitRoute();
-  }, [hasDriverPosition, fitRoute]);
+    if (followDriver && truckPosition) followPosition();
+  }, [followDriver, truckPosition, followPosition]);
 
   /* ── Clear previous layers helper ── */
   const clearLayers = useCallback(() => {
@@ -133,10 +197,6 @@ export default function MapView({
     if (routeLayerRef.current) {
       map.removeLayer(routeLayerRef.current);
       routeLayerRef.current = null;
-    }
-    if (traversedLayerRef.current) {
-      map.removeLayer(traversedLayerRef.current);
-      traversedLayerRef.current = null;
     }
     if (remainingLayerRef.current) {
       map.removeLayer(remainingLayerRef.current);
@@ -196,82 +256,30 @@ export default function MapView({
     // Route polyline
     const routeLine = L.polyline(
       pts.map((p) => [p[0], p[1]] as L.LatLngTuple),
-      { weight: 5, color: "#1a73e8", opacity: 1 }
+      { weight: 7, color: "#b6a1dc", opacity: 0.8 }
     ).addTo(map);
     routeLayerRef.current = routeLine;
 
     // A reroute redraws the same route; keep the user's current zoom and pan
     if (fittedRouteIdRef.current === route.id) return;
     fittedRouteIdRef.current = route.id;
+    manualViewRef.current = false;
     fitRoute();
   }, [route, clearLayers, fitRoute]);
 
-  /* ── Simulation: add truck + traversed/remaining when sim starts ── */
+  /* The full planned route stays visible underneath the current remaining road path. */
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    if (
-      simState === "running" ||
-      simState === "paused" ||
-      simState === "finished"
-    ) {
-      // Swap the static line for the animated one only when there is an animated path (GPS mode has none)
-      if (routeLayerRef.current && animationPoints.length > 0) {
-        map.removeLayer(routeLayerRef.current);
-        routeLayerRef.current = null;
-      }
-
-      // Shadow polyline (full path)
-      if (!traversedLayerRef.current && animationPoints.length > 0) {
-        const shadow = L.polyline(animationPoints, {
-          weight: 8,
-          color: "#1a73e8",
-          opacity: 0.12,
-        }).addTo(map);
-        // Traversed (gray dashed)
-        const traversed = L.polyline([], {
-          weight: 5,
-          color: "#9aa0a6",
-          opacity: 0.6,
-          dashArray: "6",
-        }).addTo(map);
-        // Remaining (blue)
-        const remaining = L.polyline(animationPoints, {
-          weight: 5,
-          color: "#1a73e8",
-          opacity: 1,
-        }).addTo(map);
-
-        markersRef.current.push(shadow);
-        traversedLayerRef.current = traversed;
-        remainingLayerRef.current = remaining;
-      }
-
+    if (remainingLayerRef.current) {
+      map.removeLayer(remainingLayerRef.current);
+      remainingLayerRef.current = null;
     }
-
-    if (simState === "idle") {
-      // Remove simulation layers, re-draw static route
-      if (traversedLayerRef.current) {
-        map.removeLayer(traversedLayerRef.current);
-        traversedLayerRef.current = null;
-      }
-      if (remainingLayerRef.current) {
-        map.removeLayer(remainingLayerRef.current);
-        remainingLayerRef.current = null;
-      }
-      if (truckMarkerRef.current) {
-        map.removeLayer(truckMarkerRef.current);
-        truckMarkerRef.current = null;
-      }
-      if (!routeLayerRef.current && route?.polyline) {
-        routeLayerRef.current = L.polyline(
-          decodePolyline(route.polyline).map((p) => [p[0], p[1]] as L.LatLngTuple),
-          { weight: 5, color: "#1a73e8", opacity: 1 }
-        ).addTo(map);
-      }
+    if (route && currentPoints.length && simState !== "finished") {
+      remainingLayerRef.current = L.polyline(currentPoints, { weight: 5, color: "#6750a4", opacity: 1 }).addTo(map);
     }
-  }, [simState, animationPoints, route]);
+  }, [currentPoints, route, simState]);
 
   /* ── Show current driver position in simulation and GPS modes ── */
   useEffect(() => {
@@ -304,16 +312,6 @@ export default function MapView({
       truckMarkerRef.current.setLatLng(truckPosition);
     }
 
-    if (traversedLayerRef.current) {
-      traversedLayerRef.current.setLatLngs(
-        animationPoints.slice(0, currentPointIndex + 1)
-      );
-    }
-    if (remainingLayerRef.current) {
-      remainingLayerRef.current.setLatLngs(
-        animationPoints.slice(currentPointIndex)
-      );
-    }
   }, [truckPosition, currentPointIndex, animationPoints, route, simState]);
 
   /* ── Replace remaining polyline on reroute ── */
