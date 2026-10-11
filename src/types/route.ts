@@ -126,6 +126,7 @@ export interface TripPositionUpdate {
   lng: number;
   heading?: number;
   speed_kmh?: number;
+  captured_at?: string;
 }
 
 export interface TripEventResponse {
@@ -146,6 +147,8 @@ export interface TripResponse {
   current_lat?: number;
   current_lng?: number;
   heading?: number;
+  /** When the driver's latest accepted position was captured (UTC) */
+  current_position_at?: string;
   
   start_address: string;
   end_address: string;
@@ -192,6 +195,9 @@ export interface TripResponse {
   scheduled_at?: string;
   concrete_mix?: string;
   outcome?: string;
+  completion_distance_meters?: number | null;
+  completion_review_required?: boolean | null;
+  completion_review_reason?: string | null;
 }
 
 export interface TripRerouteInfo {
@@ -219,36 +225,99 @@ export interface SimulationConfig {
 
 /*  Plants & Dispatch types  */
 
-export interface PlantOut {
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+}
+
+/** Plant as returned by GET/POST/PATCH /plants (catalogue contract) */
+export interface PlantResource {
+  id: string;
+  organization_id: string | null;
+  name: string;
+  brand_id: string;
+  region_id: string;
+  address: string;
+  location: GeoLocation;
+  active: boolean;
+  supported_mix_codes: string[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+  country_code: string;
+  timezone: string;
+  city_id: string | null;
+  state_id: string | null;
+  administrative_area: string | null;
+  calibration_status: CalibrationStatus;
+}
+
+export type CalibrationStatus = "calibrated" | "uncalibrated" | (string & {});
+
+export interface Region {
+  id: string;
+  organization_id: string | null;
+  name: string;
+  country_code: string;
+  administrative_area?: string | null;
+  timezone: string;
+  calibration_status: CalibrationStatus;
+  active?: boolean;
+  city_id: string | null;
+  state_id: string | null;
+  version: number;
+}
+
+export interface Country { code: string; name: string; organization_id: string; }
+export interface StateProvince { id: string; country_code: string; name: string; organization_id: string | null; }
+export interface City { id: string; state_id: string; name: string; timezone: string; organization_id: string | null; }
+
+export interface Brand {
   id: string;
   name: string;
-  brand: string;
-  address: string;
-  lat: number;
-  lng: number;
-  region: string;
-  active: boolean;
-}
-
-export interface PlantCreate {
-  name: string;
-  brand: string;
-  address: string;
-  lat: number;
-  lng: number;
-  region: string;
-  active: boolean;
-}
-
-export interface PlantUpdate {
-  name?: string;
-  brand?: string;
-  address?: string;
-  lat?: number;
-  lng?: number;
-  region?: string;
+  organization_id: string | null;
+  version: number;
   active?: boolean;
 }
+
+export interface Business {
+  id: string;
+  name: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CurrentUserCapabilities {
+  user_id: string;
+  organization_id: string | null;
+  organization_role: string | null;
+  is_platform_admin: boolean;
+  can_manage_businesses: boolean;
+  can_manage_catalogue: boolean;
+  can_manage_company_assignments: boolean;
+  can_operate_trips: boolean;
+}
+
+/** Structured catalogue plant with coordinates flattened for map components. */
+export interface PlantOut extends Omit<PlantResource, "location"> {
+  lat: number;
+  lng: number;
+}
+
+/** POST /plants body */
+export interface PlantCreate {
+  name: string;
+  brand_id: string;
+  region_id: string;
+  address: string;
+  location: GeoLocation;
+  active: boolean;
+  supported_mix_codes: string[];
+}
+
+/** PATCH /plants/{id} body: only changed fields, plus the version being edited */
+export type PlantPatch = Partial<PlantCreate> & { version: number };
 
 export interface JobSite {
   id: string;        // uuid generated client-side
@@ -270,18 +339,26 @@ export interface PlantPredictionResult {
   recommendation?: string;
   llm_analysis?: Record<string, unknown>;
   error?: string;
+  /** False when live weather could not be fetched and neutral defaults were used */
+  weather_available?: boolean;
+  /** Why weather is unavailable (present when weather_available is false) */
+  weather_error?: string | null;
+  /** "uncalibrated" when the prediction isn't based on validated regional data */
+  calibration_status?: CalibrationStatus;
 }
 
 export interface BrandAnalysisRequest {
-  brand: string;
+  brand_id: string;
+  region_id?: string;
   job_site_data: Record<string, unknown>;
+  country_code?: "IN" | "NZ";
   concrete_mix?: string;
   top_n?: number;
   include_llm_analysis?: boolean;
 }
 
 export interface BrandAnalysisResponse {
-  brand: string;
+  brand_id: string;
   job_site_address: string;
   concrete_mix: string;
   total_plants_analysed: number;
@@ -328,4 +405,3 @@ export interface TripCompleteRequest {
   success?: boolean;
   notes?: string;
 }
-
